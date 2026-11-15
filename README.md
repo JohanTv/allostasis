@@ -67,36 +67,44 @@ alo ws prune proj-123      # Poda segura con respaldo automático .tar.gz
 
 ## 🏛️ Arquitectura del Repositorio
 
-El proyecto sigue rigurosamente los principios **SOLID**, **Domain-Driven Design (DDD)** y **Arquitectura Hexagonal (Ports & Adapters)**:
+El proyecto sigue rigurosamente los principios **SOLID**, **Clean Architecture** y **Arquitectura Hexagonal (Ports & Adapters)**:
 
 ```text
 allostasis/
 ├── cmd/
-│   └── alo/                    # Entrypoint principal (CLI unificado)
+│   └── alo/                    # Entrypoint CLI unificado y Composition Root
+│       ├── main.go             # Graceful shutdown (SIGINT/SIGTERM) y M2M shielding
+│       ├── root.go             # Configuración rootCmd, flags globales e inyección
+│       ├── cmd_cockpit.go      # Comandos agenda, load y log
+│       ├── cmd_workspace.go    # Subcomandos alo ws (list, create, audit, prune)
+│       ├── cmd_sync.go         # Sincronización outbox hacia tracker remoto
+│       └── cmd_ticket.go       # Catálogo y gestión de tareas (list, get, create, etc.)
 ├── internal/
-│   ├── bootstrap/              # Composition Root (inyección manual, arranque <5ms)
-│   ├── domain/                 # 🧠 Núcleo puro (cero dependencias externas)
-│   │   ├── clock/              # Reloj inmutable (Clock, FrozenClock)
-│   │   ├── ledger/             # KleeInterval, AllostaticLoad, Little's Law
-│   │   ├── issue/              # WorkItem, State, Comment, OutboxEvent
-│   │   └── workspace/          # Container, WorktreeBranch, MergeStatus
-│   ├── ports/                  # 🔌 Interfaces segregadas mínimas (ISP)
-│   │   ├── in/                 # Casos de uso de entrada
-│   │   └── out/                # Puertos de salida (repository, git, tracker)
-│   ├── adapters/               # ⚙️ Infraestructura y drivers concretos
-│   │   ├── sqlite/             # Pure-Go SQLite con Wazero y dual-pool WAL
-│   │   ├── gitcli/             # Wrapper os/exec con PGID isolation y feature detection
-│   │   ├── tracker_plane/      # Adaptador REST de Plane CE con Circuit Breaker
-│   │   └── tracker_local/      # Adaptador 100% offline local
-│   ├── presentation/           # 🖥️ Estrategias de salida
-│   │   ├── json/               # Presenter estructurado para Agentes de IA
-│   │   ├── plain/              # Presenter para tuberías Unix
-│   │   └── tui/                # Cockpit interactivo con Charm (Bubble Tea)
-│   └── testutil/               # Fakes en memoria y sandboxes efímeros de prueba
-├── legacy/                     # Código original de referencia y suites de pruebas
-├── testdata/golden/            # Archivos dorados para verificación de contratos
-└── Makefile                    # Compilación, tests y formateo
+│   ├── domain/                 # 🧠 Núcleo de Dominio puro (cero dependencias externas)
+│   │   ├── clock/              # Reloj determinista (Clock, FrozenClock)
+│   │   ├── ledger/             # Medida de Klee, AllostaticLoad, Ley de Little
+│   │   ├── issue/              # Modelos canónicos WorkItem, State, Label, OutboxRecord
+│   │   └── workspace/          # Modelos Container, WorktreeBinding, MergeStatus
+│   ├── app/                    # 💼 Capa de Aplicación y Puertos Canónicos
+│   │   ├── ports.go            # Interfaces IssueStore, WorklogStore, WorkspaceRunner, RemoteTrackerClient
+│   │   ├── cockpit.go          # CockpitService (cálculo de carga alostática y métricas)
+│   │   ├── tracker.go          # TrackerService (gestión local-first y sincronización upstream)
+│   │   └── workspace.go        # WorkspaceService (orquestación multi-worktree con rollback)
+│   ├── adapters/               # ⚙️ Adaptadores de Infraestructura (Outbound)
+│   │   ├── sqlite/             # Pure-Go SQLite (Wazero), doble pool concurrente WAL
+│   │   ├── gitcli/             # Ejecutor Git con aislamiento PGID y rollback transaccional
+│   │   └── tracker_plane/      # Cliente HTTP REST puro desacoplado de base de datos
+│   └── presentation/           # 🖥️ Estrategias de Presentación e Interfaz
+│       ├── errors/             # Envelope JSON estructurado, categorías y códigos POSIX
+│       └── tui/                # Cockpit reactivo no bloqueante (Charm Bubble Tea)
+├── docs/                       # 📚 Especificaciones, auditorías y gobernanza
+│   ├── ARQUITECTURA.md         # Especificación técnica exhaustiva y principios SOLID
+│   ├── RFCS_Y_DECISIONES.md    # Matriz viva de ADRs y estado de RFCs
+│   └── AUDITORIA_ARQUITECTURA_Y_CALIDAD.md
+└── Makefile                    # Compilación, tests con -race e instalación local
 ```
+
+Para una inmersión detallada en los patrones de diseño y decisiones estructurales, consulte [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md) y [`docs/RFCS_Y_DECISIONES.md`](docs/RFCS_Y_DECISIONES.md).
 
 ---
 

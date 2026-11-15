@@ -81,8 +81,9 @@ func initWorkspaceService() (*app.WorkspaceService, *sqlite.Store, error) {
 
 func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "alo",
-		Short: "Allostasis - The Sovereign Developer Cockpit for Flow and Cognitive Load Regulation",
+		Use:     "alo",
+		Version: Version,
+		Short:   "Allostasis - The Sovereign Developer Cockpit for Flow and Cognitive Load Regulation",
 		Long: `Allostasis (alo) es tu estación soberana de cabina:
 Visibiliza el trabajo invisible, protege tu foco aplicando la Ley de Little,
 y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,

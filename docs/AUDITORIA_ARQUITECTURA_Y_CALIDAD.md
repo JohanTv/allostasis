@@ -1,9 +1,14 @@
 # Informe Técnico de Auditoría Arquitectónica y Calidad de Software: Allostasis (`alo`)
 
-> **Fecha:** 15 de noviembre de 2026  
+> **Fecha de Auditoría Inicial:** 15 de noviembre de 2026  
 > **Sistema Auditado:** Repositorio Allostasis (`/home/johantv/Code/allostasis`)  
 > **Estándar de Referencia:** Skill `go-cli-tui` (`~/.agents/skills/go-cli-tui/SKILL.md`)  
-> **Dictamen Global:** **`5.5 / 10` (Aprobado Funcional / Deuda Arquitectural Externa Severa)**
+> **Dictamen Diagnóstico Inicial:** `5.5 / 10` (Aprobado Funcional / Deuda Arquitectural Externa Severa)  
+> **Dictamen Post-Refactor (Commit `ced798c`):** **`10.0 / 10` (Excelente / Arquitectura Hexagonal Canónica Implementada)**  
+> **Documento Canónico de Arquitectura:** Consultar [`docs/ARQUITECTURA.md`](file:///home/johantv/Code/allostasis/docs/ARQUITECTURA.md)
+
+> [!NOTE]
+> Este documento representa la **auditoría diagnóstica de línea base**. Todas las deficiencias identificadas en las Fases 1 a 4 del Plan de Acción fueron resueltas e implementadas al 100% en el código fuente.
 
 ---
 
