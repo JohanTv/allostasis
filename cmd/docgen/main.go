@@ -324,9 +324,13 @@ func CheckRelativeLinks(docsDir string) []string {
 			}
 
 			resolved := filepath.Clean(filepath.Join(filepath.Dir(path), targetFile))
+			absResolved, err := filepath.Abs(resolved)
+			if err != nil {
+				absResolved = resolved
+			}
 
 			// Detección de Path Traversal fuera del repositorio
-			relToRoot, err := filepath.Rel(repoRoot, resolved)
+			relToRoot, err := filepath.Rel(repoRoot, absResolved)
 			if err != nil || strings.HasPrefix(relToRoot, "..") {
 				errs = append(errs, fmt.Sprintf("%s: enlace hacia el exterior del repositorio no permitido (path traversal): %s", relFile, targetFile))
 				continue
