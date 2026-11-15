@@ -33,3 +33,16 @@
 | **0027** | [Incremental Outbox & Delta Sync](rfcs/0027-incremental-sync-and-granularity.md) | implemented | `alo sync`, `internal/app/tracker.go` | Local-first outbox pattern enqueuing worklogs and issue mutations when offline, with idempotent batch flushing to upstream tracker. |
 | **0029** | [Interactive TUI Worktree Navigator](rfcs/0029-tui-worktree-navigator.md) | proposed | Target: v0.2.0 | Interactive Charm Bubble Tea view (`alo ws browse`) for visual inspection, terminal/Zellij launch, and interactive safe pruning. |
 | **0030** | [Background Sync Daemon](rfcs/0030-background-sync-daemon.md) | proposed | Target: v0.2.0 | Non-blocking background worker (`alo daemon`) for automatic periodic outbox flushing upon network availability. |
+
+---
+
+## 3. Principles & Operational References
+
+- 🧭 [**Design Principles of Allostasis**](principles.md): Fundamentos ontológicos y principios rectores del producto (P1 a P5, Ley de Little, Medida de Lebesgue de Klee).
+- 📚 [**Suite de Referencias y Gobernanza Operativa**](references/README.md):
+  - [Protocolo de Living Tickets y Fases del SDLC](references/PROTOCOLO_LIVING_TICKETS_Y_SDLC.md)
+  - [Protocolo de Relevo Asíncrono de Tareas (Task Handoff)](references/PROTOCOLO_RELEVO_ASINCRONO_HANDOFF.md)
+  - [Matriz de Taxonomía y Protocolo de Tickets Paraguas](references/MATRIZ_TAXONOMIA_Y_TICKETS_PARAGUAS.md)
+  - [Estrategia Integral de Gestión TI y Work Items](references/ESTRATEGIA_GESTION_TI_Y_WORKITEMS.md)
+  - [Gobernanza y Principios de Diseño del CLI](references/CLI_DESIGN_GUARD.md)
+
