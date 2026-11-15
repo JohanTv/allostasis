@@ -57,6 +57,11 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// DB expone la conexión subyacente para operaciones transaccionales o sincronizadores.
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
 // migrateBaseline asegura que las tablas requeridas existan sin romper bases preexistentes de Python.
 func (s *Store) migrateBaseline() error {
 	schema := `

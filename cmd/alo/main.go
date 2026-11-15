@@ -12,10 +12,12 @@ import (
 
 	"github.com/allostasis/alo/internal/adapters/gitcli"
 	"github.com/allostasis/alo/internal/adapters/sqlite"
+	"github.com/allostasis/alo/internal/adapters/tracker_plane"
 	"github.com/allostasis/alo/internal/app"
 	"github.com/allostasis/alo/internal/domain/clock"
 	"github.com/allostasis/alo/internal/domain/ledger"
 	"github.com/allostasis/alo/internal/domain/workspace"
+	"github.com/allostasis/alo/internal/presentation/errors"
 	"github.com/allostasis/alo/internal/presentation/tui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -464,8 +466,44 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 	}
 	wsPruneCmd.Flags().BoolVar(&backupFlag, "backup", true, "Generar respaldo tar.gz si existen cambios no commiteados")
 
+	// 6. Comando sync (Sincronización con Plane CE)
+	var limitFlag int
+	syncCmd := &cobra.Command{
+		Use:   "sync",
+		Short: "Sincroniza eventos diferidos (outbox) y comentarios con Plane CE",
+		Run: func(cmd *cobra.Command, args []string) {
+			_, store, _, err := initCockpitService()
+			if err != nil {
+				errors.EmitError(err, "DATABASE_ERROR", "Verifica la ruta a la base de datos", jsonFlag)
+			}
+			defer store.Close()
+
+			cfg := tracker_plane.LoadConfigFromEnv()
+			client := tracker_plane.NewClient(cfg)
+
+			ctx := context.Background()
+			report, err := client.FlushOutbox(ctx, store.DB(), limitFlag)
+			if err != nil {
+				errors.EmitError(err, "SYNC_FAILED", "Verifica la conectividad con Plane CE o PLANE_API_KEY", jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(report, true)
+				return
+			}
+
+			fmt.Printf("🔄 [SINCRONIZACIÓN PLANE CE] - Estado: %s\n", report.Status)
+			fmt.Printf("   • Comentarios publicados: %d\n", report.SentComments)
+			fmt.Printf("   • Fallidos / Reintentos:  %d\n", report.FailedComments)
+			for _, e := range report.Errors {
+				fmt.Printf("   ⚠ %s\n", e)
+			}
+		},
+	}
+	syncCmd.Flags().IntVar(&limitFlag, "limit", 20, "Límite máximo de eventos outbox a procesar por lote")
+
 	wsCmd.AddCommand(wsListCmd, wsCreateCmd, wsPruneCmd)
-	rootCmd.AddCommand(versionCmd, agendaCmd, loadCmd, logCmd, wsCmd)
+	rootCmd.AddCommand(versionCmd, agendaCmd, loadCmd, logCmd, syncCmd, wsCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
