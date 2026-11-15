@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/allostasis/alo/internal/adapters/gitcli"
 	"github.com/allostasis/alo/internal/domain/workspace"
+	"github.com/allostasis/alo/internal/presentation/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -39,13 +39,13 @@ audita merges trifásicos en memoria y protege tu código con respaldos automát
 		Use:   "version",
 		Short: "Muestra la versión de alo-ws",
 		Run: func(cmd *cobra.Command, args []string) {
+			payload := map[string]string{
+				"app":        "alo-ws",
+				"version":    Version,
+				"build_date": BuildDate,
+			}
 			if jsonFlag {
-				payload := map[string]string{
-					"app":        "alo-ws",
-					"version":    Version,
-					"build_date": BuildDate,
-				}
-				_ = json.NewEncoder(os.Stdout).Encode(payload)
+				errors.EmitSuccess(payload, true)
 				return
 			}
 			fmt.Printf("Allostasis Worktree (alo-ws) v%s (compilado: %s)\n", Version, BuildDate)
@@ -60,12 +60,16 @@ audita merges trifásicos en memoria y protege tu código con respaldos automát
 			ctx := context.Background()
 			containers, err := gitExec.ListContainers(ctx, ".worktrees")
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error listando worktrees: %v\n", err)
-				os.Exit(1)
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:        "WORKSPACE_LIST_FAILED",
+					Category:    errors.CategoryInternal,
+					Hint:        "Verifica permisos de lectura en el directorio .worktrees/",
+					Recoverable: true,
+				}, errors.ExitGeneralError, jsonFlag)
 			}
 
 			if jsonFlag {
-				_ = json.NewEncoder(os.Stdout).Encode(containers)
+				errors.EmitSuccess(containers, true)
 				return
 			}
 
@@ -107,8 +111,14 @@ audita merges trifásicos en memoria y protege tu código con respaldos automát
 			for _, tok := range repoTokens {
 				resolved, err := gitExec.ResolveRepo(ctx, tok)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error resolviendo repo '%s': %v\n", tok, err)
-					os.Exit(1)
+					errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+						Code:             "REPO_NOT_FOUND",
+						Category:         errors.CategoryUserInput,
+						Target:           tok,
+						Hint:             fmt.Sprintf("Verifica que '%s' sea un repositorio Git válido o una ruta accesible", tok),
+						SuggestedCommand: fmt.Sprintf("alo-ws create %s .", ticketID),
+						Recoverable:      true,
+					}, errors.ExitNotFound, jsonFlag)
 				}
 				repoName := filepath.Base(resolved)
 				branchName := fmt.Sprintf("feat/%s", strings.ToLower(ticketID))
@@ -130,12 +140,16 @@ audita merges trifásicos en memoria y protege tu código con respaldos automát
 			}
 
 			if err := gitExec.CreateWorktree(ctx, container); err != nil {
-				fmt.Fprintf(os.Stderr, "Error creando contenedor: %v\n", err)
-				os.Exit(1)
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:        "WORKTREE_CREATION_FAILED",
+					Category:    errors.CategoryStateConflict,
+					Hint:        "Asegúrate de que la rama base exista y no haya colisiones de nombre",
+					Recoverable: true,
+				}, errors.ExitGeneralError, jsonFlag)
 			}
 
 			if jsonFlag {
-				_ = json.NewEncoder(os.Stdout).Encode(container)
+				errors.EmitSuccess(container, true)
 				return
 			}
 
@@ -158,15 +172,24 @@ audita merges trifásicos en memoria y protege tu código con respaldos automát
 			containerPath := filepath.Join(".worktrees", ticketID)
 
 			if fi, err := os.Stat(containerPath); err != nil || !fi.IsDir() {
-				fmt.Fprintf(os.Stderr, "Error: el contenedor '%s' no existe\n", containerPath)
-				os.Exit(1)
+				errors.EmitErrorWithDetail(fmt.Errorf("el contenedor '%s' no existe", containerPath), errors.ErrorDetail{
+					Code:             "CONTAINER_NOT_FOUND",
+					Category:         errors.CategoryUserInput,
+					Target:           ticketID,
+					Hint:             "Ejecuta 'alo-ws list' para ver los contenedores disponibles",
+					SuggestedCommand: "alo-ws list",
+					Recoverable:      true,
+				}, errors.ExitNotFound, jsonFlag)
 			}
 
 			ctx := context.Background()
 			containers, err := gitExec.ListContainers(ctx, ".worktrees")
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:        "WORKSPACE_AUDIT_FAILED",
+					Category:    errors.CategoryInternal,
+					Recoverable: true,
+				}, errors.ExitGeneralError, jsonFlag)
 			}
 
 			var targetContainer *workspace.Container
@@ -179,8 +202,13 @@ audita merges trifásicos en memoria y protege tu código con respaldos automát
 			}
 
 			if targetContainer == nil {
-				fmt.Fprintf(os.Stderr, "Error: contenedor no reconocido en .worktrees/\n")
-				os.Exit(1)
+				errors.EmitErrorWithDetail(fmt.Errorf("contenedor no reconocido en .worktrees/"), errors.ErrorDetail{
+					Code:             "CONTAINER_UNRECOGNIZED",
+					Category:         errors.CategoryUserInput,
+					Hint:             "Verifica con 'alo-ws list' el identificador exacto",
+					SuggestedCommand: "alo-ws list",
+					Recoverable:      true,
+				}, errors.ExitNotFound, jsonFlag)
 			}
 
 			backupDir := ""
@@ -190,8 +218,12 @@ audita merges trifásicos en memoria y protege tu código con respaldos automát
 			}
 
 			if err := gitExec.PruneWorktree(ctx, targetContainer, backupDir); err != nil {
-				fmt.Fprintf(os.Stderr, "Error al podar worktree: %v\n", err)
-				os.Exit(1)
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:        "PRUNE_FAILED",
+					Category:    errors.CategoryStateConflict,
+					Hint:        "Verifica que ningún proceso tenga archivos abiertos en el contenedor",
+					Recoverable: true,
+				}, errors.ExitGeneralError, jsonFlag)
 			}
 
 			if jsonFlag {
@@ -200,7 +232,7 @@ audita merges trifásicos en memoria y protege tu código con respaldos automát
 					"ticket_id": targetContainer.TicketID,
 					"path":      containerPath,
 				}
-				_ = json.NewEncoder(os.Stdout).Encode(payload)
+				errors.EmitSuccess(payload, true)
 				return
 			}
 
@@ -211,7 +243,9 @@ audita merges trifásicos en memoria y protege tu código con respaldos automát
 
 	rootCmd.AddCommand(versionCmd, listCmd, createCmd, pruneCmd)
 
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+	errors.SafeExecute(jsonFlag, func() {
+		if err := rootCmd.Execute(); err != nil {
+			os.Exit(1)
+		}
+	})
 }
