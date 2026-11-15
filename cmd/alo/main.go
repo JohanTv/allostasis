@@ -660,7 +660,7 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 				payload := map[string]interface{}{
 					"count":   len(items),
 					"results": items,
-					"schema":  "plane-tracker/1",
+					"schema":  "allostasis/1",
 					"view":    "list",
 				}
 				errors.EmitSuccess(payload, true)

@@ -108,7 +108,7 @@ audita merges trifásicos en memoria y protege tu código con respaldos automát
 
 		// Soporte sintaxis dual:
 		// 1) alo-ws create TICKET [REPOS...]
-		// 2) plane-worktree add TICKET SLUG REPOS...
+		// 2) alo-ws add TICKET SLUG REPOS...
 		if len(args) >= 2 {
 			// Comprobar si args[1] es un repo resoluble o un slug descriptivo
 			ctx := context.Background()
