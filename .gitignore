@@ -1,0 +1,25 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+
+# Database and caches
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.cache/
+
+# IDE and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
