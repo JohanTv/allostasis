@@ -2,6 +2,7 @@
 bin/
 /alo
 /alo-ws
+/plane-tracker
 *.exe
 *.exe~
 *.dll

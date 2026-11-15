@@ -566,3 +566,239 @@ func (c *Client) UpdateIssueRemote(ctx context.Context, projectID, issueID strin
 
 	return nil
 }
+
+// DeleteIssueRemote elimina un work item en Plane CE.
+func (c *Client) DeleteIssueRemote(ctx context.Context, projectID, issueID string) error {
+	if c.cfg.APIKey == "" {
+		return fmt.Errorf("PLANE_API_KEY no configurada")
+	}
+
+	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issues/%s/", c.cfg.BaseURL, c.cfg.Workspace, projectID, issueID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("x-api-key", c.cfg.APIKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("error de red al eliminar tarea en Plane: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		respBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Plane retornó HTTP %d al eliminar tarea: %s", resp.StatusCode, string(respBytes))
+	}
+
+	return nil
+}
+
+// AddLinkRemote asocia un enlace a una tarea en Plane CE.
+func (c *Client) AddLinkRemote(ctx context.Context, projectID, issueID, title, linkURL string) (*issue.Link, error) {
+	if c.cfg.APIKey == "" {
+		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
+	}
+
+	payload := map[string]string{
+		"title": title,
+		"url":   linkURL,
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issues/%s/links/", c.cfg.BaseURL, c.cfg.Workspace, projectID, issueID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("x-api-key", c.cfg.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("error de red al agregar enlace en Plane: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("Plane retornó HTTP %d al agregar enlace: %s", resp.StatusCode, string(respBytes))
+	}
+
+	var res map[string]interface{}
+	_ = json.Unmarshal(respBytes, &res)
+	id, _ := res["id"].(string)
+
+	return &issue.Link{
+		ID:        id,
+		IssueID:   issueID,
+		Title:     title,
+		URL:       linkURL,
+		CreatedAt: time.Now(),
+	}, nil
+}
+
+// ListLinksRemote consulta los enlaces de una tarea en Plane CE.
+func (c *Client) ListLinksRemote(ctx context.Context, projectID, issueID string) ([]issue.Link, error) {
+	if c.cfg.APIKey == "" {
+		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
+	}
+
+	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issues/%s/links/", c.cfg.BaseURL, c.cfg.Workspace, projectID, issueID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("x-api-key", c.cfg.APIKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var res []map[string]interface{}
+	respBytes, _ := io.ReadAll(resp.Body)
+	_ = json.Unmarshal(respBytes, &res)
+
+	list := make([]issue.Link, 0)
+	for _, item := range res {
+		id, _ := item["id"].(string)
+		title, _ := item["title"].(string)
+		linkURL, _ := item["url"].(string)
+		list = append(list, issue.Link{
+			ID:        id,
+			IssueID:   issueID,
+			Title:     title,
+			URL:       linkURL,
+			CreatedAt: time.Now(),
+		})
+	}
+	return list, nil
+}
+
+// DeleteLinkRemote remueve un enlace de una tarea en Plane CE.
+func (c *Client) DeleteLinkRemote(ctx context.Context, projectID, issueID, linkID string) error {
+	if c.cfg.APIKey == "" {
+		return fmt.Errorf("PLANE_API_KEY no configurada")
+	}
+
+	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issues/%s/links/%s/", c.cfg.BaseURL, c.cfg.Workspace, projectID, issueID, linkID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("x-api-key", c.cfg.APIKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("error al eliminar enlace (HTTP %d)", resp.StatusCode)
+	}
+	return nil
+}
+
+// EditCommentRemote actualiza el contenido de un comentario en Plane CE.
+func (c *Client) EditCommentRemote(ctx context.Context, projectID, issueID, commentID, newBody string) error {
+	if c.cfg.APIKey == "" {
+		return fmt.Errorf("PLANE_API_KEY no configurada")
+	}
+
+	payload := map[string]string{
+		"comment_html": fmt.Sprintf("<p>%s</p>", newBody),
+	}
+	payloadBytes, _ := json.Marshal(payload)
+	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issues/%s/comments/%s/", c.cfg.BaseURL, c.cfg.Workspace, projectID, issueID, commentID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("x-api-key", c.cfg.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("error al editar comentario (HTTP %d)", resp.StatusCode)
+	}
+	return nil
+}
+
+// DeleteCommentRemote elimina un comentario en Plane CE.
+func (c *Client) DeleteCommentRemote(ctx context.Context, projectID, issueID, commentID string) error {
+	if c.cfg.APIKey == "" {
+		return fmt.Errorf("PLANE_API_KEY no configurada")
+	}
+
+	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issues/%s/comments/%s/", c.cfg.BaseURL, c.cfg.Workspace, projectID, issueID, commentID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("x-api-key", c.cfg.APIKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("error al eliminar comentario (HTTP %d)", resp.StatusCode)
+	}
+	return nil
+}
+
+// SyncLabels sincroniza las etiquetas de un proyecto desde Plane CE hacia la base local SQLite.
+func (c *Client) SyncLabels(ctx context.Context, store *sqlite.Store, projectID string) (int, error) {
+	if c.cfg.APIKey == "" {
+		return 0, fmt.Errorf("PLANE_API_KEY no configurada")
+	}
+
+	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issue-labels/", c.cfg.BaseURL, c.cfg.Workspace, projectID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("x-api-key", c.cfg.APIKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("error al obtener etiquetas de Plane (HTTP %d)", resp.StatusCode)
+	}
+
+	var res []map[string]interface{}
+	respBytes, _ := io.ReadAll(resp.Body)
+	_ = json.Unmarshal(respBytes, &res)
+
+	count := 0
+	for _, l := range res {
+		id, _ := l["id"].(string)
+		name, _ := l["name"].(string)
+		color, _ := l["color"].(string)
+		if id != "" && name != "" {
+			_ = store.SaveLabel(ctx, issue.Label{
+				ID:        id,
+				ProjectID: projectID,
+				Name:      name,
+				Color:     color,
+			})
+			count++
+		}
+	}
+	return count, nil
+}

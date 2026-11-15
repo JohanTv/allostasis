@@ -350,140 +350,227 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 		},
 	}
 
-	// ws create
+	// ws create / add
 	var baseRefFlag string
-	wsCreateCmd := &cobra.Command{
-		Use:   "create <TICKET-ID> [REPOS...]",
-		Short: "Crea un contenedor transaccional de worktrees para un ticket",
-		Args:  cobra.MinimumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			_, store, gitExec, err := initCockpitService()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			defer store.Close()
+	var typeFlag string
+	wsCreateHandler := func(cmd *cobra.Command, args []string) {
+		_, store, gitExec, err := initCockpitService()
+		if err != nil {
+			errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+				Code:     "INIT_FAILED",
+				Category: errors.CategoryInternal,
+			}, errors.ExitGeneralError, jsonFlag)
+		}
+		defer store.Close()
 
-			ticketID := strings.ToUpper(args[0])
-			repoTokens := args[1:]
-			if len(repoTokens) == 0 {
-				repoTokens = []string{"."}
-			}
+		ticketID := strings.ToUpper(args[0])
+		var slug string
+		var repoTokens []string
 
+		if len(args) >= 2 {
 			ctx := context.Background()
-			var bindings []workspace.WorktreeBinding
-
-			for _, tok := range repoTokens {
-				resolved, err := gitExec.ResolveRepo(ctx, tok)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error resolviendo repo '%s': %v\n", tok, err)
-					os.Exit(1)
-				}
-				repoName := filepath.Base(resolved)
-				branchName := fmt.Sprintf("feat/%s", strings.ToLower(ticketID))
-
-				bindings = append(bindings, workspace.WorktreeBinding{
-					RepoName: repoName,
-					RepoPath: resolved,
-					Branch:   branchName,
-				})
+			_, err := gitExec.ResolveRepo(ctx, args[1])
+			if err == nil {
+				slug = strings.ToLower(ticketID)
+				repoTokens = args[1:]
+			} else {
+				slug = fmt.Sprintf("%s-%s", strings.ToLower(ticketID), strings.ToLower(args[1]))
+				repoTokens = args[2:]
 			}
+		} else {
+			slug = strings.ToLower(ticketID)
+		}
 
-			containerPath := filepath.Join(".worktrees", strings.ToLower(ticketID))
-			container := &workspace.Container{
-				TicketID: ticketID,
-				Slug:     strings.ToLower(ticketID),
-				Path:     containerPath,
-				BaseRef:  baseRefFlag,
-				Bindings: bindings,
-			}
+		if len(repoTokens) == 0 {
+			repoTokens = []string{"."}
+		}
 
-			if err := gitExec.CreateWorktree(ctx, container); err != nil {
-				fmt.Fprintf(os.Stderr, "Error creando contenedor: %v\n", err)
-				os.Exit(1)
-			}
+		ctx := context.Background()
+		var bindings []workspace.WorktreeBinding
 
-			if jsonFlag {
-				errors.EmitSuccess(container, true)
-				return
-			}
+		branchPrefix := "feat"
+		if typeFlag != "" {
+			branchPrefix = typeFlag
+		}
 
-			fmt.Printf("✓ Contenedor creado exitosamente en %s\n", containerPath)
-			for _, b := range container.Bindings {
-				fmt.Printf("  • %s -> rama: %s\n", b.RepoName, b.Branch)
+		for _, tok := range repoTokens {
+			resolved, err := gitExec.ResolveRepo(ctx, tok)
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:             "REPO_NOT_FOUND",
+					Category:         errors.CategoryUserInput,
+					Target:           tok,
+					Hint:             fmt.Sprintf("Verifica que '%s' sea un repositorio Git válido o una ruta accesible", tok),
+					SuggestedCommand: fmt.Sprintf("alo ws create %s .", ticketID),
+					Recoverable:      true,
+				}, errors.ExitNotFound, jsonFlag)
 			}
-		},
+			repoName := filepath.Base(resolved)
+			branchName := fmt.Sprintf("%s/%s", branchPrefix, slug)
+
+			bindings = append(bindings, workspace.WorktreeBinding{
+				RepoName: repoName,
+				RepoPath: resolved,
+				Branch:   branchName,
+			})
+		}
+
+		containerPath := filepath.Join(".worktrees", slug)
+		container := &workspace.Container{
+			TicketID: ticketID,
+			Slug:     slug,
+			Path:     containerPath,
+			BaseRef:  baseRefFlag,
+			Bindings: bindings,
+		}
+
+		if err := gitExec.CreateWorktree(ctx, container); err != nil {
+			errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+				Code:        "WORKTREE_CREATION_FAILED",
+				Category:    errors.CategoryStateConflict,
+				Hint:        "Asegúrate de que la rama base exista y no haya colisiones de nombre",
+				Recoverable: true,
+			}, errors.ExitGeneralError, jsonFlag)
+		}
+
+		if jsonFlag {
+			errors.EmitSuccess(container, true)
+			return
+		}
+
+		fmt.Printf("✓ Contenedor creado exitosamente en %s\n", containerPath)
+		for _, b := range container.Bindings {
+			fmt.Printf("  • %s -> rama: %s\n", b.RepoName, b.Branch)
+		}
+	}
+
+	wsCreateCmd := &cobra.Command{
+		Use:     "create <TICKET-ID> [SLUG] [REPOS...]",
+		Aliases: []string{"add"},
+		Short:   "Crea un contenedor transaccional de worktrees para un ticket (alias: add)",
+		Args:    cobra.MinimumNArgs(1),
+		Run:     wsCreateHandler,
 	}
 	wsCreateCmd.Flags().StringVar(&baseRefFlag, "base", "main", "Rama base upstream (ej. main, dev)")
+	wsCreateCmd.Flags().StringVar(&typeFlag, "type", "feat", "Tipo de rama (feat, fix, spike, refactor, test, infra)")
 
-	// ws prune
-	var backupFlag bool
-	wsPruneCmd := &cobra.Command{
-		Use:   "prune <TICKET-ID>",
-		Short: "Desmantela de forma segura un contenedor de worktree",
-		Args:  cobra.ExactArgs(1),
+	// ws audit
+	var wsAuditDirFlag string
+	var wsAuditBaseFlag string
+	var wsAuditNoFetchFlag bool
+	wsAuditCmd := &cobra.Command{
+		Use:   "audit [TARGET]",
+		Short: "Audita contenedores de worktrees verificando merge status y salud local",
+		Args:  cobra.MaximumNArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			_, store, gitExec, err := initCockpitService()
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
 			}
 			defer store.Close()
 
-			ticketID := strings.ToLower(args[0])
-			containerPath := filepath.Join(".worktrees", ticketID)
-
-			if fi, err := os.Stat(containerPath); err != nil || !fi.IsDir() {
-				fmt.Fprintf(os.Stderr, "Error: el contenedor '%s' no existe\n", containerPath)
-				os.Exit(1)
+			target := ""
+			if len(args) > 0 {
+				target = args[0]
 			}
 
 			ctx := context.Background()
-			containers, err := gitExec.ListContainers(ctx, ".worktrees")
+			containers, err := gitExec.AuditContainers(ctx, wsAuditDirFlag, target, wsAuditBaseFlag, "", wsAuditNoFetchFlag)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:        "AUDIT_FAILED",
+					Category:    errors.CategoryInternal,
+					Recoverable: true,
+				}, errors.ExitGeneralError, jsonFlag)
 			}
 
-			var targetContainer *workspace.Container
-			for i := range containers {
-				if strings.EqualFold(containers[i].Slug, ticketID) {
-					targetContainer = &containers[i]
-					targetContainer.TicketID = strings.ToUpper(ticketID)
-					break
-				}
-			}
-
-			if targetContainer == nil {
-				fmt.Fprintf(os.Stderr, "Error: contenedor no reconocido en .worktrees/\n")
-				os.Exit(1)
-			}
-
-			backupDir := ""
-			if backupFlag {
-				home, _ := os.UserHomeDir()
-				backupDir = filepath.Join(home, ".cache", "allostasis", "worktree-backups")
-			}
-
-			if err := gitExec.PruneWorktree(ctx, targetContainer, backupDir); err != nil {
-				fmt.Fprintf(os.Stderr, "Error al podar worktree: %v\n", err)
-				os.Exit(1)
+			if containers == nil {
+				containers = make([]workspace.ContainerAudit, 0)
 			}
 
 			if jsonFlag {
-				payload := map[string]string{
-					"status":    "pruned",
-					"ticket_id": targetContainer.TicketID,
-					"path":      containerPath,
-				}
-				errors.EmitSuccess(payload, true)
+				errors.EmitSuccess(containers, true)
 				return
 			}
 
-			fmt.Printf("✓ Contenedor %s podado limpiamente.\n", containerPath)
+			if len(containers) == 0 {
+				if target != "" {
+					fmt.Printf("No se encontró el contenedor o ticket '%s' en '%s'.\n", target, wsAuditDirFlag)
+				} else {
+					fmt.Printf("Sin worktrees activos para auditar en '%s'.\n", wsAuditDirFlag)
+				}
+				return
+			}
+
+			fmt.Printf("Auditoría de worktrees en '%s':\n\n", wsAuditDirFlag)
+			for _, c := range containers {
+				fmt.Printf("  • %s [%s: %s]\n", c.Container, c.Category, c.Reason)
+				for _, r := range c.Repos {
+					fmt.Printf("     └── %s [%s] (merged: %v, clean: %v)\n", r.Name, r.Branch, r.IsMerged, r.IsClean)
+				}
+			}
 		},
 	}
-	wsPruneCmd.Flags().BoolVar(&backupFlag, "backup", true, "Generar respaldo tar.gz si existen cambios no commiteados")
+	wsAuditCmd.Flags().StringVar(&wsAuditDirFlag, "dir", ".worktrees", "Directorio base de contenedores")
+	wsAuditCmd.Flags().StringVar(&wsAuditBaseFlag, "base", "", "Rama base preferida")
+	wsAuditCmd.Flags().BoolVar(&wsAuditNoFetchFlag, "no-fetch", false, "Omitir git fetch previo")
+
+	// ws prune
+	var wsPruneDirFlag string
+	var wsPruneExecuteFlag bool
+	var wsPruneIncludeStaleFlag bool
+	var wsPruneNoFetchFlag bool
+	var wsPruneBackupDirFlag string
+	wsPruneCmd := &cobra.Command{
+		Use:   "prune [TARGET]",
+		Short: "Desmantela o simula la eliminación de worktrees",
+		Args:  cobra.MaximumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			_, store, gitExec, err := initCockpitService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			target := ""
+			if len(args) > 0 {
+				target = args[0]
+			}
+
+			ctx := context.Background()
+			res, err := gitExec.PruneContainers(ctx, wsPruneDirFlag, target, wsPruneExecuteFlag, wsPruneIncludeStaleFlag, wsPruneNoFetchFlag, wsPruneBackupDirFlag)
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:        "PRUNE_FAILED",
+					Category:    errors.CategoryStateConflict,
+					Recoverable: true,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(res, true)
+				return
+			}
+
+			if !wsPruneExecuteFlag {
+				fmt.Printf("Simulación de poda (dry-run): %d seguro(s), %d stale(s), %d bloqueado(s)\n", len(res.PrunedSafe), len(res.PrunedStale), len(res.Blocked))
+				return
+			}
+
+			fmt.Printf("✔ Poda ejecutada: %d contenedor(es) eliminados.\n", len(res.PrunedSafe)+len(res.PrunedStale))
+		},
+	}
+	wsPruneCmd.Flags().StringVar(&wsPruneDirFlag, "dir", ".worktrees", "Directorio base de contenedores")
+	wsPruneCmd.Flags().BoolVar(&wsPruneExecuteFlag, "execute", false, "Ejecutar la poda destructiva en disco")
+	wsPruneCmd.Flags().BoolVar(&wsPruneIncludeStaleFlag, "include-stale", false, "Podar también contenedores stale/cancelados")
+	wsPruneCmd.Flags().BoolVar(&wsPruneNoFetchFlag, "no-fetch", false, "Omitir git fetch previo")
+	wsPruneCmd.Flags().StringVar(&wsPruneBackupDirFlag, "backup-dir", "", "Directorio para respaldos tar.gz")
 
 	// 6. Comando sync (Sincronización con Plane CE)
 	var limitFlag int
@@ -819,8 +906,302 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 		},
 	}
 
-	ticketCmd.AddCommand(ticketListCmd, ticketSearchCmd, ticketGetCmd, ticketCreateCmd, ticketUpdateCmd, ticketSyncCmd, ticketWhoamiCmd)
-	wsCmd.AddCommand(wsListCmd, wsCreateCmd, wsPruneCmd)
+	// ticket labels
+	var ticketLabelsProjectFlag string
+	var ticketLabelsRefreshFlag bool
+	ticketLabelsCmd := &cobra.Command{
+		Use:   "labels",
+		Short: "Listar las etiquetas del proyecto",
+		Run: func(cmd *cobra.Command, args []string) {
+			trackerSvc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := context.Background()
+			labels, err := trackerSvc.Labels(ctx, ticketLabelsProjectFlag, ticketLabelsRefreshFlag)
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "LABELS_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if labels == nil {
+				labels = make([]issue.Label, 0)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(labels, true)
+				return
+			}
+
+			fmt.Printf("🏷️ %d Etiquetas encontradas:\n", len(labels))
+			for _, l := range labels {
+				fmt.Printf("  • %-20s (Color: %s)\n", l.Name, l.Color)
+			}
+		},
+	}
+	ticketLabelsCmd.Flags().StringVarP(&ticketLabelsProjectFlag, "project", "p", "", "Filtrar por proyecto")
+	ticketLabelsCmd.Flags().BoolVar(&ticketLabelsRefreshFlag, "refresh", false, "Refrescar desde Plane CE")
+
+	// ticket delete
+	var ticketDeleteYesFlag bool
+	var ticketDeleteDiscardFlag bool
+	ticketDeleteCmd := &cobra.Command{
+		Use:   "delete <TICKET-ID>",
+		Short: "Eliminar una tarea de forma permanente",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			trackerSvc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := context.Background()
+			res, err := trackerSvc.Delete(ctx, args[0], ticketDeleteYesFlag, ticketDeleteDiscardFlag)
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "DELETE_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(res, true)
+				return
+			}
+
+			if !ticketDeleteYesFlag {
+				fmt.Printf("⚠ Alcance de borrado para %s:\n  Para confirmar la eliminación permanente incluye: --yes\n", args[0])
+				return
+			}
+			fmt.Printf("✓ Tarea %s eliminada limpiamente.\n", args[0])
+		},
+	}
+	ticketDeleteCmd.Flags().BoolVar(&ticketDeleteYesFlag, "yes", false, "Confirmar eliminación")
+	ticketDeleteCmd.Flags().BoolVar(&ticketDeleteDiscardFlag, "discard-worklogs", false, "Descartar horas registradas asociadas")
+
+	// ticket link
+	ticketLinkCmd := &cobra.Command{
+		Use:   "link",
+		Short: "Gestión de enlaces externos y PRs asociados al ticket",
+	}
+	var ticketLinkTitleFlag string
+	ticketLinkAddCmd := &cobra.Command{
+		Use:   "add <TICKET-ID> <URL>",
+		Short: "Asociar un enlace externo al ticket",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			trackerSvc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := context.Background()
+			l, err := trackerSvc.AddLink(ctx, args[0], ticketLinkTitleFlag, args[1])
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "LINK_ADD_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(l, true)
+				return
+			}
+			fmt.Printf("✓ Enlace '%s' asociado a %s.\n", l.Title, args[0])
+		},
+	}
+	ticketLinkAddCmd.Flags().StringVar(&ticketLinkTitleFlag, "title", "", "Título descriptivo del enlace")
+
+	ticketLinkListCmd := &cobra.Command{
+		Use:   "list <TICKET-ID>",
+		Short: "Listar enlaces de un ticket",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			trackerSvc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := context.Background()
+			links, err := trackerSvc.ListLinks(ctx, args[0])
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "LINK_LIST_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if links == nil {
+				links = make([]issue.Link, 0)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(links, true)
+				return
+			}
+
+			fmt.Printf("🔗 Enlaces para %s (%d):\n", args[0], len(links))
+			for _, l := range links {
+				fmt.Printf("  • [%s] %s -> %s\n", l.ID, l.Title, l.URL)
+			}
+		},
+	}
+
+	ticketLinkDeleteCmd := &cobra.Command{
+		Use:   "delete <TICKET-ID> <LINK-ID>",
+		Short: "Eliminar un enlace",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			trackerSvc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := context.Background()
+			if err := trackerSvc.DeleteLink(ctx, args[0], args[1]); err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "LINK_DELETE_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(map[string]string{"status": "deleted", "link_id": args[1]}, true)
+				return
+			}
+			fmt.Printf("✓ Enlace %s eliminado de %s.\n", args[1], args[0])
+		},
+	}
+	ticketLinkCmd.AddCommand(ticketLinkAddCmd, ticketLinkListCmd, ticketLinkDeleteCmd)
+
+	// ticket focus
+	ticketFocusCmd := &cobra.Command{
+		Use:   "focus",
+		Short: "Gestión de foco de sesión del agente (set, clear, status)",
+	}
+	ticketFocusSetCmd := &cobra.Command{
+		Use:   "set <TICKET-ID>",
+		Short: "Marcar el ticket en el que trabaja la sesión",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			trackerSvc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := context.Background()
+			f, err := trackerSvc.SetFocus(ctx, args[0], "")
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "FOCUS_SET_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(f, true)
+				return
+			}
+			fmt.Printf("🎯 Foco de sesión fijado en %s.\n", args[0])
+		},
+	}
+
+	ticketFocusClearCmd := &cobra.Command{
+		Use:   "clear",
+		Short: "Cerrar la marca de foco activa",
+		Run: func(cmd *cobra.Command, args []string) {
+			trackerSvc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := context.Background()
+			f, err := trackerSvc.ClearFocus(ctx, "")
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "FOCUS_CLEAR_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(f, true)
+				return
+			}
+			fmt.Printf("✓ Foco cerrado para %s (%d minutos transcurridos).\n", f.TicketID, f.DurationMinutes)
+		},
+	}
+
+	ticketFocusStatusCmd := &cobra.Command{
+		Use:   "status",
+		Short: "Ver el ticket de foco activo hoy",
+		Run: func(cmd *cobra.Command, args []string) {
+			trackerSvc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := context.Background()
+			f, err := trackerSvc.FocusStatus(ctx, "")
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "FOCUS_STATUS_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(f, true)
+				return
+			}
+
+			if !f.Active {
+				fmt.Println("No hay ningún ticket en foco activo actualmente.")
+				return
+			}
+			fmt.Printf("🎯 Ticket en foco activo: %s (iniciado hace %d minutos).\n", f.TicketID, f.DurationMinutes)
+		},
+	}
+	ticketFocusCmd.AddCommand(ticketFocusSetCmd, ticketFocusClearCmd, ticketFocusStatusCmd)
+
+	ticketCmd.AddCommand(ticketListCmd, ticketSearchCmd, ticketGetCmd, ticketCreateCmd, ticketUpdateCmd, ticketSyncCmd, ticketWhoamiCmd, ticketLabelsCmd, ticketDeleteCmd, ticketLinkCmd, ticketFocusCmd)
+	wsCmd.AddCommand(wsListCmd, wsCreateCmd, wsAuditCmd, wsPruneCmd)
 	rootCmd.AddCommand(versionCmd, agendaCmd, loadCmd, logCmd, syncCmd, wsCmd, ticketCmd)
 
 	errors.SafeExecute(jsonFlag, func() {

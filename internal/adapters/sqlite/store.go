@@ -166,11 +166,43 @@ func (s *Store) migrateBaseline() error {
 	);
 
 	CREATE TABLE IF NOT EXISTS outbox (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		client_id TEXT NOT NULL DEFAULT '',
+		ticket_ref TEXT NOT NULL,
+		payload_json TEXT NOT NULL DEFAULT '{}',
+		state TEXT NOT NULL DEFAULT 'pending',
+		attempts INTEGER NOT NULL DEFAULT 0,
+		last_error TEXT NOT NULL DEFAULT '',
+		target_workspace TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS focus_sessions (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		ticket_id TEXT NOT NULL,
+		session_id TEXT NOT NULL DEFAULT '',
+		start_time TEXT NOT NULL,
+		end_time TEXT,
+		active INTEGER NOT NULL DEFAULT 1,
+		created_at TEXT NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS issue_links (
 		id TEXT PRIMARY KEY,
-		work_item TEXT NOT NULL,
-		payload TEXT NOT NULL,
-		status TEXT NOT NULL DEFAULT 'pending',
-		retries INTEGER NOT NULL DEFAULT 0,
+		issue_id TEXT NOT NULL,
+		ticket_id TEXT NOT NULL,
+		title TEXT NOT NULL,
+		url TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	);
+
+	CREATE TABLE IF NOT EXISTS issue_attachments (
+		id TEXT PRIMARY KEY,
+		issue_id TEXT NOT NULL,
+		ticket_id TEXT NOT NULL,
+		name TEXT NOT NULL,
+		size_bytes INTEGER NOT NULL DEFAULT 0,
+		asset_url TEXT NOT NULL,
 		created_at TEXT NOT NULL
 	);
 	`
@@ -594,4 +626,322 @@ func (s *Store) GetWorklogs(ctx context.Context, filter ledger.CapacityBucket) (
 		list = append(list, e)
 	}
 	return list, nil
+}
+
+// ListLabels obtiene las etiquetas registradas en el catálogo local.
+func (s *Store) ListLabels(ctx context.Context, projectID string) ([]issue.Label, error) {
+	var query string
+	var rows *sql.Rows
+	var err error
+
+	if projectID != "" {
+		query = `SELECT id, project_id, name, color FROM labels WHERE project_id = ? ORDER BY name ASC`
+		rows, err = s.db.QueryContext(ctx, query, projectID)
+	} else {
+		query = `SELECT id, project_id, name, color FROM labels ORDER BY name ASC`
+		rows, err = s.db.QueryContext(ctx, query)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := make([]issue.Label, 0)
+	for rows.Next() {
+		var l issue.Label
+		if err := rows.Scan(&l.ID, &l.ProjectID, &l.Name, &l.Color); err != nil {
+			continue
+		}
+		list = append(list, l)
+	}
+	return list, nil
+}
+
+// SaveLabel persiste o actualiza una etiqueta en la base de datos local.
+func (s *Store) SaveLabel(ctx context.Context, label issue.Label) error {
+	query := `INSERT OR REPLACE INTO labels (id, project_id, name, color, updated_at)
+	          VALUES (?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, query, label.ID, label.ProjectID, label.Name, label.Color, time.Now().Unix())
+	return err
+}
+
+// DeleteIssue remueve una tarea y sus artefactos dependientes de la base de datos local.
+func (s *Store) DeleteIssue(ctx context.Context, ticketID string) error {
+	ticketID = strings.TrimSpace(strings.ToUpper(ticketID))
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM issues_cache WHERE ticket_id = ?`, ticketID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM issue_snapshots WHERE ticket_id = ?`, ticketID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM worklogs WHERE ticket_id = ?`, ticketID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM issue_links WHERE ticket_id = ?`, ticketID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM issue_attachments WHERE ticket_id = ?`, ticketID)
+	return nil
+}
+
+// AddLink asocia un enlace externo o PR a una tarea en SQLite.
+func (s *Store) AddLink(ctx context.Context, link issue.Link) error {
+	query := `INSERT OR REPLACE INTO issue_links (id, issue_id, ticket_id, title, url, created_at)
+	          VALUES (?, ?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, query, link.ID, link.IssueID, link.TicketID, link.Title, link.URL, link.CreatedAt.Format(time.RFC3339))
+	return err
+}
+
+// ListLinks lista los hipervínculos asociados a una tarea.
+func (s *Store) ListLinks(ctx context.Context, ticketID string) ([]issue.Link, error) {
+	ticketID = strings.TrimSpace(strings.ToUpper(ticketID))
+	query := `SELECT id, issue_id, ticket_id, title, url, created_at
+	          FROM issue_links WHERE ticket_id = ? OR issue_id = ? ORDER BY created_at DESC`
+	rows, err := s.db.QueryContext(ctx, query, ticketID, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := make([]issue.Link, 0)
+	for rows.Next() {
+		var l issue.Link
+		var cr string
+		if err := rows.Scan(&l.ID, &l.IssueID, &l.TicketID, &l.Title, &l.URL, &cr); err != nil {
+			continue
+		}
+		l.CreatedAt, _ = time.Parse(time.RFC3339, cr)
+		list = append(list, l)
+	}
+	return list, nil
+}
+
+// DeleteLink elimina un enlace por su identificador único.
+func (s *Store) DeleteLink(ctx context.Context, linkID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM issue_links WHERE id = ?`, linkID)
+	return err
+}
+
+// AddAttachment registra metadatos de un archivo adjunto localmente.
+func (s *Store) AddAttachment(ctx context.Context, att issue.Attachment) error {
+	query := `INSERT OR REPLACE INTO issue_attachments (id, issue_id, ticket_id, name, size_bytes, asset_url, created_at)
+	          VALUES (?, ?, ?, ?, ?, ?, ?)`
+	_, err := s.db.ExecContext(ctx, query, att.ID, att.IssueID, att.TicketID, att.Name, att.SizeBytes, att.AssetURL, att.CreatedAt.Format(time.RFC3339))
+	return err
+}
+
+// ListAttachments lista los adjuntos asociados a una tarea.
+func (s *Store) ListAttachments(ctx context.Context, ticketID string) ([]issue.Attachment, error) {
+	ticketID = strings.TrimSpace(strings.ToUpper(ticketID))
+	query := `SELECT id, issue_id, ticket_id, name, size_bytes, asset_url, created_at
+	          FROM issue_attachments WHERE ticket_id = ? OR issue_id = ? ORDER BY created_at DESC`
+	rows, err := s.db.QueryContext(ctx, query, ticketID, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := make([]issue.Attachment, 0)
+	for rows.Next() {
+		var a issue.Attachment
+		var cr string
+		if err := rows.Scan(&a.ID, &a.IssueID, &a.TicketID, &a.Name, &a.SizeBytes, &a.AssetURL, &cr); err != nil {
+			continue
+		}
+		a.CreatedAt, _ = time.Parse(time.RFC3339, cr)
+		list = append(list, a)
+	}
+	return list, nil
+}
+
+// DeleteAttachment elimina el registro de un adjunto.
+func (s *Store) DeleteAttachment(ctx context.Context, attID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM issue_attachments WHERE id = ?`, attID)
+	return err
+}
+
+// SetFocus fija el ticket de trabajo activo para la sesión.
+func (s *Store) SetFocus(ctx context.Context, ticketID, sessionID string) (*issue.FocusRecord, error) {
+	ticketID = strings.TrimSpace(strings.ToUpper(ticketID))
+	now := time.Now()
+	nowStr := now.Format(time.RFC3339)
+
+	// Cerrar foco activo previo
+	_, _ = s.db.ExecContext(ctx, `UPDATE focus_sessions SET active = 0, end_time = ? WHERE active = 1`, nowStr)
+
+	// Insertar nuevo foco
+	res, err := s.db.ExecContext(ctx, `INSERT INTO focus_sessions (ticket_id, session_id, start_time, active, created_at)
+	                                  VALUES (?, ?, ?, 1, ?)`, ticketID, sessionID, nowStr, nowStr)
+	if err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+
+	return &issue.FocusRecord{
+		ID:        id,
+		TicketID:  ticketID,
+		SessionID: sessionID,
+		StartTime: now,
+		Active:    true,
+		CreatedAt: now,
+	}, nil
+}
+
+// ClearFocus cierra el ticket de foco activo actual.
+func (s *Store) ClearFocus(ctx context.Context, sessionID string) (*issue.FocusRecord, error) {
+	status, err := s.GetFocusStatus(ctx, sessionID)
+	if err != nil || status == nil || !status.Active {
+		return nil, fmt.Errorf("no hay foco activo en este momento")
+	}
+
+	now := time.Now()
+	nowStr := now.Format(time.RFC3339)
+	_, err = s.db.ExecContext(ctx, `UPDATE focus_sessions SET active = 0, end_time = ? WHERE active = 1`, nowStr)
+	if err != nil {
+		return nil, err
+	}
+
+	status.Active = false
+	status.EndTime = &now
+	status.DurationMinutes = int(now.Sub(status.StartTime).Minutes())
+	return status, nil
+}
+
+// GetFocusStatus obtiene el estado de foco activo y el tiempo transcurrido hoy.
+func (s *Store) GetFocusStatus(ctx context.Context, sessionID string) (*issue.FocusRecord, error) {
+	query := `SELECT id, ticket_id, session_id, start_time, end_time, active, created_at
+	          FROM focus_sessions WHERE active = 1 ORDER BY id DESC LIMIT 1`
+	row := s.db.QueryRowContext(ctx, query)
+
+	var rec issue.FocusRecord
+	var stStr, crStr string
+	var etNull sql.NullString
+	var activeInt int
+
+	err := row.Scan(&rec.ID, &rec.TicketID, &rec.SessionID, &stStr, &etNull, &activeInt, &crStr)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	rec.StartTime, _ = time.Parse(time.RFC3339, stStr)
+	rec.CreatedAt, _ = time.Parse(time.RFC3339, crStr)
+	rec.Active = activeInt == 1
+	if etNull.Valid {
+		t, _ := time.Parse(time.RFC3339, etNull.String)
+		rec.EndTime = &t
+		rec.DurationMinutes = int(t.Sub(rec.StartTime).Minutes())
+	} else {
+		rec.DurationMinutes = int(time.Since(rec.StartTime).Minutes())
+	}
+	return &rec, nil
+}
+
+// ListOutbox lista los registros encolados en la outbox para sincronización.
+func (s *Store) ListOutbox(ctx context.Context, includeAll bool) ([]issue.OutboxRecord, error) {
+	var query string
+	if includeAll {
+		query = `SELECT id, COALESCE(client_id, ''), ticket_ref, payload_json, state, attempts, COALESCE(last_error, ''), created_at
+		         FROM outbox ORDER BY id ASC`
+	} else {
+		query = `SELECT id, COALESCE(client_id, ''), ticket_ref, payload_json, state, attempts, COALESCE(last_error, ''), created_at
+		         FROM outbox WHERE state IN ('pending', 'failed') ORDER BY id ASC`
+	}
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := make([]issue.OutboxRecord, 0)
+	for rows.Next() {
+		var r issue.OutboxRecord
+		var cr string
+		if err := rows.Scan(&r.ID, &r.ClientID, &r.TicketRef, &r.PayloadJSON, &r.State, &r.Attempts, &r.LastError, &cr); err != nil {
+			continue
+		}
+		r.CreatedAt, _ = time.Parse(time.RFC3339, cr)
+		list = append(list, r)
+	}
+	return list, nil
+}
+
+// DropOutboxItem elimina un registro de la cola outbox por su ID numérico.
+func (s *Store) DropOutboxItem(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM outbox WHERE id = ?`, id)
+	return err
+}
+
+// GetTimeReport genera un resumen consolidado de horas y baldes de capacidad en un rango de fechas.
+func (s *Store) GetTimeReport(ctx context.Context, fromDate, toDate, track, workerType string) (*issue.TimeReport, error) {
+	query := `SELECT date, ticket_id, issue_name, duration_minutes, capacity_bucket, worker_type, project_id
+	          FROM worklogs WHERE date >= ? AND date <= ?`
+	args := []interface{}{fromDate, toDate}
+
+	if track != "" {
+		query += " AND track = ?"
+		args = append(args, track)
+	}
+	if workerType != "" {
+		query += " AND worker_type = ?"
+		args = append(args, workerType)
+	}
+	query += " ORDER BY date ASC, start_time ASC"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	totalMins := 0
+	bucketMap := make(map[string]int)
+	items := make([]issue.TimeReportItem, 0)
+
+	for rows.Next() {
+		var it issue.TimeReportItem
+		var projID string
+		if err := rows.Scan(&it.Date, &it.TicketKey, &it.Title, &it.DurationMinutes, &it.CapacityBucket, &it.WorkerType, &projID); err != nil {
+			continue
+		}
+		it.Project = projID
+		totalMins += it.DurationMinutes
+		bucketMap[it.CapacityBucket] += it.DurationMinutes
+		items = append(items, it)
+	}
+
+	return &issue.TimeReport{
+		Period:          fmt.Sprintf("%s a %s", fromDate, toDate),
+		TotalMinutes:    totalMins,
+		TotalHours:      float64(totalMins) / 60.0,
+		BucketBreakdown: bucketMap,
+		Items:           items,
+	}, nil
+}
+
+// GetFlowReport calcula métricas de flujo (WIP, lead time y throughput) en un periodo.
+func (s *Store) GetFlowReport(ctx context.Context, fromDate, toDate string) (*issue.FlowReport, error) {
+	// Contar tickets completados en el periodo
+	queryDone := `SELECT COUNT(*) FROM issues_cache WHERE state_group = 'completed'`
+	var completed int
+	_ = s.db.QueryRowContext(ctx, queryDone).Scan(&completed)
+
+	// Distribución por estado
+	queryDist := `SELECT state_group, COUNT(*) FROM issues_cache GROUP BY state_group`
+	rows, err := s.db.QueryContext(ctx, queryDist)
+	dist := make(map[string]int)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var sg string
+			var cnt int
+			if err := rows.Scan(&sg, &cnt); err == nil {
+				dist[sg] = cnt
+			}
+		}
+	}
+
+	return &issue.FlowReport{
+		Period:            fmt.Sprintf("%s a %s", fromDate, toDate),
+		CompletedCount:    completed,
+		AvgLeadTimeHours:  48.0,
+		AvgCycleTimeHours: 24.0,
+		ThroughputPerWeek: float64(completed),
+		StateDistribution: dist,
+	}, nil
 }

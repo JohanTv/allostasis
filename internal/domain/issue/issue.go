@@ -85,3 +85,97 @@ type OutboxEvent struct {
 	Retries   int          `json:"retries"`
 	CreatedAt time.Time    `json:"created_at"`
 }
+
+// Label modela una etiqueta en Plane CE / local.
+type Label struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	Name      string `json:"name"`
+	Color     string `json:"color"`
+}
+
+// Link modela un hipervínculo externo o PR asociado a un ticket.
+type Link struct {
+	ID        string    `json:"id"`
+	IssueID   string    `json:"issue_id"`
+	TicketID  string    `json:"ticket_id"`
+	Title     string    `json:"title"`
+	URL       string    `json:"url"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Attachment modela un archivo adjunto subido a Plane CE.
+type Attachment struct {
+	ID        string    `json:"id"`
+	IssueID   string    `json:"issue_id"`
+	TicketID  string    `json:"ticket_id"`
+	Name      string    `json:"name"`
+	SizeBytes int64     `json:"size_bytes"`
+	AssetURL  string    `json:"asset_url"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// FocusRecord registra el foco de atención activo de la sesión del agente.
+type FocusRecord struct {
+	ID              int64      `json:"id"`
+	TicketID        string     `json:"ticket_id"`
+	SessionID       string     `json:"session_id,omitempty"`
+	StartTime       time.Time  `json:"start_time"`
+	EndTime         *time.Time `json:"end_time,omitempty"`
+	Active          bool       `json:"active"`
+	DurationMinutes int        `json:"duration_minutes"`
+	CreatedAt       time.Time  `json:"created_at"`
+}
+
+// WorklogProposal encapsula una recomendación de tiempo para registrar al cerrar sesión.
+type WorklogProposal struct {
+	TicketID        string    `json:"ticket_id"`
+	DurationMinutes int       `json:"duration_minutes"`
+	WindowStart     time.Time `json:"window_start"`
+	WindowEnd       time.Time `json:"window_end"`
+	CapacityBucket  string    `json:"capacity_bucket"`
+	WorkerType      string    `json:"worker_type"`
+	Reason          string    `json:"reason"`
+}
+
+// TimeReportItem resume el tiempo acumulado por ticket y balde.
+type TimeReportItem struct {
+	Date            string `json:"date"`
+	Project         string `json:"project"`
+	TicketKey       string `json:"ticket_key"`
+	Title           string `json:"title"`
+	DurationMinutes int    `json:"duration_minutes"`
+	CapacityBucket  string `json:"capacity_bucket"`
+	WorkerType      string `json:"worker_type"`
+}
+
+// TimeReport consolida la distribución de esfuerzo en un periodo.
+type TimeReport struct {
+	Period          string            `json:"period"`
+	TotalMinutes    int               `json:"total_minutes"`
+	TotalHours      float64           `json:"total_hours"`
+	BucketBreakdown map[string]int    `json:"bucket_breakdown"`
+	Items           []TimeReportItem  `json:"items"`
+}
+
+// FlowReport reporta métricas de lead time, cycle time y throughput.
+type FlowReport struct {
+	Period             string         `json:"period"`
+	CompletedCount     int            `json:"completed_count"`
+	AvgLeadTimeHours   float64        `json:"avg_lead_time_hours"`
+	AvgCycleTimeHours  float64        `json:"avg_cycle_time_hours"`
+	ThroughputPerWeek  float64        `json:"throughput_per_week"`
+	StateDistribution  map[string]int `json:"state_distribution"`
+}
+
+// OutboxRecord representa una fila en la tabla outbox de despacho.
+type OutboxRecord struct {
+	ID          int64     `json:"id"`
+	ClientID    string    `json:"client_id"`
+	TicketRef   string    `json:"ticket_ref"`
+	PayloadJSON string    `json:"payload_json"`
+	State       string    `json:"state"`
+	Attempts    int       `json:"attempts"`
+	LastError   string    `json:"last_error,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
