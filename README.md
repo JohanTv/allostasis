@@ -100,7 +100,9 @@ allostasis/
 ├── docs/                       # 📚 Especificaciones, arquitectura y gobernanza
 │   ├── ARCHITECTURE.md         # Especificación técnica canónica y principios SOLID
 │   ├── INDEX.md                # Índice maestro de Decisiones (ADRs) y RFCs
-│   └── BACKLOG.md              # Backlog de ingeniería y mejoras diferidas
+│   ├── BACKLOG.md              # Backlog de ingeniería y mejoras diferidas
+│   ├── decisions/              # Architecture Decision Records (ADRs 0007 a 0028)
+│   └── rfcs/                   # Requests for Comments (RFCs 0002 a 0027)
 └── Makefile                    # Compilación, tests con -race e instalación local
 ```
 
