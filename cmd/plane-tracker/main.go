@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/allostasis/alo/internal/adapters/gitcli"
 	"github.com/allostasis/alo/internal/adapters/sqlite"
 	"github.com/allostasis/alo/internal/adapters/tracker_plane"
 	"github.com/allostasis/alo/internal/app"
@@ -39,8 +40,9 @@ func initServices() (*app.TrackerService, *app.CockpitService, *sqlite.Store, *t
 		client = tracker_plane.NewClient(planeCfg)
 	}
 
+	gitExec := gitcli.NewGitExecutor(nil)
 	trackerSvc := app.NewTrackerService(store, client)
-	cockpitSvc := app.NewCockpitService(store, nil, clock.NewRealClock())
+	cockpitSvc := app.NewCockpitService(store, gitExec, clock.NewRealClock())
 
 	return trackerSvc, cockpitSvc, store, client, nil
 }

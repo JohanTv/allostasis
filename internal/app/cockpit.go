@@ -74,7 +74,7 @@ func (s *CockpitService) GetSnapshot(ctx context.Context, worktreeRoot string) (
 		return nil, fmt.Errorf("error al listar tareas: %w", err)
 	}
 
-	var activeIssues []issue.WorkItem
+	activeIssues := make([]issue.WorkItem, 0)
 	for _, it := range allIssues {
 		if it.State == "started" || it.State == "in_progress" || it.State == "unstarted" {
 			activeIssues = append(activeIssues, it)
@@ -82,12 +82,15 @@ func (s *CockpitService) GetSnapshot(ctx context.Context, worktreeRoot string) (
 	}
 
 	// 2. Obtener contenedores de worktree
-	var containers []workspace.Container
+	containers := make([]workspace.Container, 0)
 	if worktreeRoot == "" {
 		worktreeRoot = ".worktrees"
 	}
 	if s.gitExec != nil {
-		containers, _ = s.gitExec.ListContainers(ctx, worktreeRoot)
+		c, err := s.gitExec.ListContainers(ctx, worktreeRoot)
+		if err == nil && c != nil {
+			containers = c
+		}
 	}
 
 	// 3. Obtener worklogs de hoy

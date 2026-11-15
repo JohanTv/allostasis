@@ -120,3 +120,28 @@ func TestPlaneTracker_OutboxListJSONContract(t *testing.T) {
 		t.Errorf("se esperaba ok=true en envelope, obtenido: %v", env.OK)
 	}
 }
+
+func TestPlaneTracker_AgendaJSONContract(t *testing.T) {
+	cmd := exec.Command("go", "run", "main.go", "agenda", "--json")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("agenda --json falló: %v (salida: %s)", err, string(out))
+	}
+
+	var env struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			ActiveIssues    []interface{} `json:"active_issues"`
+			ActiveWorktrees []interface{} `json:"active_worktrees"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &env); err != nil {
+		t.Fatalf("salida no es JSON válido: %v (salida: %s)", err, string(out))
+	}
+	if !env.OK {
+		t.Errorf("se esperaba ok=true en envelope, obtenido: %v", env.OK)
+	}
+	if env.Data.ActiveWorktrees == nil {
+		t.Errorf("active_worktrees no debe ser nil/null en JSON")
+	}
+}
