@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -14,57 +15,63 @@ import (
 )
 
 // ProjectRecord modela un proyecto registrado en Plane/Allostasis.
-type ProjectRecord struct {
-	Identifier string `json:"identifier"`
-	ProjectID  string `json:"project_id"`
-	Name       string `json:"name"`
-	Workspace  string `json:"workspace"`
-}
+type ProjectRecord = issue.ProjectRecord
 
 // StateRecord modela un estado de ticket por proyecto.
-type StateRecord struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
-	Name      string `json:"name"`
-	Slug      string `json:"slug"`
-	GroupName string `json:"group_name"`
-}
+type StateRecord = issue.StateRecord
 
-// Store implementa los puertos de lectura y escritura de tareas y ledger sobre SQLite (Wazero pure-Go).
+// Store implementa los puertos de lectura y escritura de tareas y ledger sobre SQLite (Wazero pure-Go)
+// con arquitectura de doble pool (writer serializado MaxOpenConns=1 y reader concurrente MaxOpenConns=NumCPU*2).
 type Store struct {
-	db *sql.DB
+	db     *sql.DB // writer
+	reader *sql.DB // reader pool
 }
 
-// NewStore inicializa la conexión SQLite con WAL mode, timeout de 10s y baseline migration automático.
+// NewStore inicializa la conexión SQLite con WAL mode, timeout de 10s y doble pool de conexiones.
 func NewStore(dsn string) (*Store, error) {
-	var uri string
+	var writeURI, readURI string
+	isMem := false
 	if dsn == ":memory:" {
-		uri = "file:alo_shared_mem?mode=memory&cache=shared&_pragma=busy_timeout(10000)"
+		isMem = true
+		writeURI = "file:alo_shared_mem?mode=memory&cache=shared&_pragma=busy_timeout(10000)"
+		readURI = writeURI
 	} else if len(dsn) > 5 && dsn[:5] == "file:" {
-		uri = dsn
+		writeURI = dsn
+		readURI = dsn
 	} else {
-		uri = fmt.Sprintf("file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)", dsn)
+		writeURI = fmt.Sprintf("file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)", dsn)
+		readURI = fmt.Sprintf("file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=query_only(ON)", dsn)
 	}
 
-	db, err := sql.Open("sqlite3", uri)
+	wDB, err := sql.Open("sqlite3", writeURI)
 	if err != nil {
-		return nil, fmt.Errorf("error al abrir base de datos sqlite: %w", err)
+		return nil, fmt.Errorf("error al abrir base de datos sqlite (writer): %w", err)
 	}
 
-	// Configuración de pool
-	if dsn == ":memory:" {
-		// Bases de datos en memoria requieren conexión fija única para preservar tablas del schema
-		db.SetMaxOpenConns(1)
-		db.SetMaxIdleConns(1)
+	wDB.SetMaxOpenConns(1)
+	wDB.SetMaxIdleConns(1)
+
+	var rDB *sql.DB
+	if isMem || readURI == writeURI {
+		rDB = wDB
 	} else {
-		db.SetMaxOpenConns(10)
-		db.SetMaxIdleConns(5)
-		db.SetConnMaxLifetime(time.Hour)
+		rDB, err = sql.Open("sqlite3", readURI)
+		if err != nil {
+			wDB.Close()
+			return nil, fmt.Errorf("error al abrir base de datos sqlite (reader): %w", err)
+		}
+		numReaders := runtime.NumCPU() * 2
+		if numReaders < 4 {
+			numReaders = 4
+		}
+		rDB.SetMaxOpenConns(numReaders)
+		rDB.SetMaxIdleConns(numReaders / 2)
+		rDB.SetConnMaxLifetime(time.Hour)
 	}
 
-	s := &Store{db: db}
+	s := &Store{db: wDB, reader: rDB}
 	if err := s.migrateBaseline(); err != nil {
-		db.Close()
+		s.Close()
 		return nil, fmt.Errorf("error al ejecutar migraciones baseline: %w", err)
 	}
 
@@ -72,7 +79,17 @@ func NewStore(dsn string) (*Store, error) {
 }
 
 func (s *Store) Close() error {
-	return s.db.Close()
+	var errW, errR error
+	if s.db != nil {
+		errW = s.db.Close()
+	}
+	if s.reader != nil && s.reader != s.db {
+		errR = s.reader.Close()
+	}
+	if errW != nil {
+		return errW
+	}
+	return errR
 }
 
 // DB expone la conexión subyacente para operaciones transaccionales o sincronizadores.
@@ -174,6 +191,8 @@ func (s *Store) migrateBaseline() error {
 		attempts INTEGER NOT NULL DEFAULT 0,
 		last_error TEXT NOT NULL DEFAULT '',
 		target_workspace TEXT NOT NULL DEFAULT '',
+		plane_comment_id TEXT NOT NULL DEFAULT '',
+		sent_at TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL
 	);
 
@@ -206,8 +225,15 @@ func (s *Store) migrateBaseline() error {
 		created_at TEXT NOT NULL
 	);
 	`
-	_, err := s.db.Exec(schema)
-	return err
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+
+	// Migraciones defensivas idempotentes
+	_, _ = s.db.Exec(`ALTER TABLE outbox ADD COLUMN target_workspace TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE outbox ADD COLUMN plane_comment_id TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE outbox ADD COLUMN sent_at TEXT NOT NULL DEFAULT ''`)
+	return nil
 }
 
 // GetIssue consulta una tarea por su clave (ej. OMNIFY-175) o UUID, extrayendo también su descripción si existe.
@@ -215,7 +241,7 @@ func (s *Store) GetIssue(ctx context.Context, key string) (*issue.WorkItem, erro
 	key = strings.TrimSpace(strings.ToUpper(key))
 	query := `SELECT id, ticket_id, project_id, title, state_name, COALESCE(state_group, state_name), priority, COALESCE(assignees_json, '')
 	          FROM issues_cache WHERE ticket_id = ? OR id = ?`
-	row := s.db.QueryRowContext(ctx, query, key, key)
+	row := s.reader.QueryRowContext(ctx, query, key, key)
 
 	var item issue.WorkItem
 	var stateStr string
@@ -231,7 +257,7 @@ func (s *Store) GetIssue(ctx context.Context, key string) (*issue.WorkItem, erro
 
 	// Enriquecer con descripción desde issue_snapshots si existe
 	var snapshotJSON sql.NullString
-	_ = s.db.QueryRowContext(ctx, `SELECT issue_json FROM issue_snapshots WHERE ticket_id = ? OR issue_id = ?`, item.Key, item.ID).Scan(&snapshotJSON)
+	_ = s.reader.QueryRowContext(ctx, `SELECT issue_json FROM issue_snapshots WHERE ticket_id = ? OR issue_id = ?`, item.Key, item.ID).Scan(&snapshotJSON)
 	if snapshotJSON.Valid && snapshotJSON.String != "" {
 		var raw map[string]interface{}
 		if err := json.Unmarshal([]byte(snapshotJSON.String), &raw); err == nil {
@@ -258,11 +284,11 @@ func (s *Store) ListIssues(ctx context.Context, state issue.State) ([]issue.Work
 	if state != "" {
 		query = `SELECT id, ticket_id, project_id, title, state_name, COALESCE(state_group, state_name), priority, COALESCE(assignees_json, '')
 		         FROM issues_cache WHERE state_group = ? OR state_name = ? ORDER BY ticket_id ASC`
-		rows, err = s.db.QueryContext(ctx, query, state, state)
+		rows, err = s.reader.QueryContext(ctx, query, state, state)
 	} else {
 		query = `SELECT id, ticket_id, project_id, title, state_name, COALESCE(state_group, state_name), priority, COALESCE(assignees_json, '')
 		         FROM issues_cache ORDER BY ticket_id ASC`
-		rows, err = s.db.QueryContext(ctx, query)
+		rows, err = s.reader.QueryContext(ctx, query)
 	}
 	if err != nil {
 		return nil, err
@@ -314,7 +340,7 @@ func (s *Store) ListIssuesFiltered(ctx context.Context, filter issue.IssueFilter
 	q += ` ORDER BY ticket_id DESC LIMIT ? OFFSET ?`
 	args = append(args, filter.Limit, filter.Offset)
 
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := s.reader.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -359,7 +385,7 @@ func (s *Store) SearchIssues(ctx context.Context, query string, project string, 
 	q += ` ORDER BY c.updated_at DESC LIMIT ?`
 	args = append(args, limit)
 
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := s.reader.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -422,7 +448,7 @@ func (s *Store) SaveProject(ctx context.Context, p ProjectRecord) error {
 
 // ListProjects retorna todos los proyectos registrados en la caché local.
 func (s *Store) ListProjects(ctx context.Context) ([]ProjectRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT identifier, project_id, name, workspace FROM projects ORDER BY identifier ASC`)
+	rows, err := s.reader.QueryContext(ctx, `SELECT identifier, project_id, name, workspace FROM projects ORDER BY identifier ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -443,7 +469,7 @@ func (s *Store) ListProjects(ctx context.Context) ([]ProjectRecord, error) {
 func (s *Store) GetProject(ctx context.Context, identifier string) (*ProjectRecord, error) {
 	identifier = strings.ToUpper(strings.TrimSpace(identifier))
 	var p ProjectRecord
-	err := s.db.QueryRowContext(ctx, `SELECT identifier, project_id, name, workspace FROM projects WHERE identifier = ? OR project_id = ?`, identifier, identifier).
+	err := s.reader.QueryRowContext(ctx, `SELECT identifier, project_id, name, workspace FROM projects WHERE identifier = ? OR project_id = ?`, identifier, identifier).
 		Scan(&p.Identifier, &p.ProjectID, &p.Name, &p.Workspace)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -472,7 +498,7 @@ func (s *Store) SaveState(ctx context.Context, st StateRecord) error {
 // GetState busca un estado por su nombre en un proyecto específico.
 func (s *Store) GetState(ctx context.Context, projectID, name string) (*StateRecord, error) {
 	var st StateRecord
-	err := s.db.QueryRowContext(ctx, `SELECT id, project_id, name, slug, group_name FROM states WHERE project_id = ? AND (LOWER(name) = LOWER(?) OR LOWER(slug) = LOWER(?))`, projectID, name, name).
+	err := s.reader.QueryRowContext(ctx, `SELECT id, project_id, name, slug, group_name FROM states WHERE project_id = ? AND (LOWER(name) = LOWER(?) OR LOWER(slug) = LOWER(?))`, projectID, name, name).
 		Scan(&st.ID, &st.ProjectID, &st.Name, &st.Slug, &st.GroupName)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -521,10 +547,10 @@ func (s *Store) SaveIssue(ctx context.Context, item *issue.WorkItem) error {
 }
 
 // EnqueueOutbox registra una mutación diferida hacia el tracker upstream.
-func (s *Store) EnqueueOutbox(ctx context.Context, event *issue.OutboxEvent) error {
-	query := `INSERT INTO outbox(id, work_item, payload, status, retries, created_at)
-	          VALUES(?, ?, ?, ?, ?, ?)`
-	_, err := s.db.ExecContext(ctx, query, event.ID, event.WorkItem, event.Payload, event.Status, event.Retries, event.CreatedAt.Format(time.RFC3339))
+func (s *Store) EnqueueOutbox(ctx context.Context, clientID, ticketRef, payloadJSON, targetWS string) error {
+	query := `INSERT INTO outbox(client_id, ticket_ref, payload_json, target_workspace, state, created_at)
+	          VALUES(?, ?, ?, ?, 'pending', ?)`
+	_, err := s.db.ExecContext(ctx, query, clientID, ticketRef, payloadJSON, targetWS, time.Now().Format(time.RFC3339))
 	return err
 }
 
@@ -566,7 +592,7 @@ func parseDateTimeFlexible(dateStr, timeStr string) (time.Time, error) {
 // GetIntervals extrae los intervalos de tiempo del ledger para el cálculo continuo de Klee.
 func (s *Store) GetIntervals(ctx context.Context) ([]ledger.Interval, error) {
 	query := `SELECT date, start_time, end_time FROM worklogs ORDER BY date ASC, start_time ASC`
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := s.reader.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -597,11 +623,11 @@ func (s *Store) GetWorklogs(ctx context.Context, filter ledger.CapacityBucket) (
 	if filter != "" {
 		query = `SELECT ticket_id, date, start_time, end_time, duration_minutes, capacity_bucket, notes, created_at
 		         FROM worklogs WHERE capacity_bucket = ? ORDER BY date DESC, start_time DESC`
-		rows, err = s.db.QueryContext(ctx, query, string(filter))
+		rows, err = s.reader.QueryContext(ctx, query, string(filter))
 	} else {
 		query = `SELECT ticket_id, date, start_time, end_time, duration_minutes, capacity_bucket, notes, created_at
 		         FROM worklogs ORDER BY date DESC, start_time DESC`
-		rows, err = s.db.QueryContext(ctx, query)
+		rows, err = s.reader.QueryContext(ctx, query)
 	}
 	if err != nil {
 		return nil, err
@@ -636,10 +662,10 @@ func (s *Store) ListLabels(ctx context.Context, projectID string) ([]issue.Label
 
 	if projectID != "" {
 		query = `SELECT id, project_id, name, color FROM labels WHERE project_id = ? ORDER BY name ASC`
-		rows, err = s.db.QueryContext(ctx, query, projectID)
+		rows, err = s.reader.QueryContext(ctx, query, projectID)
 	} else {
 		query = `SELECT id, project_id, name, color FROM labels ORDER BY name ASC`
-		rows, err = s.db.QueryContext(ctx, query)
+		rows, err = s.reader.QueryContext(ctx, query)
 	}
 	if err != nil {
 		return nil, err
@@ -689,7 +715,7 @@ func (s *Store) ListLinks(ctx context.Context, ticketID string) ([]issue.Link, e
 	ticketID = strings.TrimSpace(strings.ToUpper(ticketID))
 	query := `SELECT id, issue_id, ticket_id, title, url, created_at
 	          FROM issue_links WHERE ticket_id = ? OR issue_id = ? ORDER BY created_at DESC`
-	rows, err := s.db.QueryContext(ctx, query, ticketID, ticketID)
+	rows, err := s.reader.QueryContext(ctx, query, ticketID, ticketID)
 	if err != nil {
 		return nil, err
 	}
@@ -727,7 +753,7 @@ func (s *Store) ListAttachments(ctx context.Context, ticketID string) ([]issue.A
 	ticketID = strings.TrimSpace(strings.ToUpper(ticketID))
 	query := `SELECT id, issue_id, ticket_id, name, size_bytes, asset_url, created_at
 	          FROM issue_attachments WHERE ticket_id = ? OR issue_id = ? ORDER BY created_at DESC`
-	rows, err := s.db.QueryContext(ctx, query, ticketID, ticketID)
+	rows, err := s.reader.QueryContext(ctx, query, ticketID, ticketID)
 	if err != nil {
 		return nil, err
 	}
@@ -803,7 +829,7 @@ func (s *Store) ClearFocus(ctx context.Context, sessionID string) (*issue.FocusR
 func (s *Store) GetFocusStatus(ctx context.Context, sessionID string) (*issue.FocusRecord, error) {
 	query := `SELECT id, ticket_id, session_id, start_time, end_time, active, created_at
 	          FROM focus_sessions WHERE active = 1 ORDER BY id DESC LIMIT 1`
-	row := s.db.QueryRowContext(ctx, query)
+	row := s.reader.QueryRowContext(ctx, query)
 
 	var rec issue.FocusRecord
 	var stStr, crStr string
@@ -835,14 +861,14 @@ func (s *Store) GetFocusStatus(ctx context.Context, sessionID string) (*issue.Fo
 func (s *Store) ListOutbox(ctx context.Context, includeAll bool) ([]issue.OutboxRecord, error) {
 	var query string
 	if includeAll {
-		query = `SELECT id, COALESCE(client_id, ''), ticket_ref, payload_json, state, attempts, COALESCE(last_error, ''), created_at
+		query = `SELECT id, COALESCE(client_id, ''), ticket_ref, payload_json, state, attempts, COALESCE(last_error, ''), COALESCE(target_workspace, ''), COALESCE(plane_comment_id, ''), COALESCE(sent_at, ''), created_at
 		         FROM outbox ORDER BY id ASC`
 	} else {
-		query = `SELECT id, COALESCE(client_id, ''), ticket_ref, payload_json, state, attempts, COALESCE(last_error, ''), created_at
+		query = `SELECT id, COALESCE(client_id, ''), ticket_ref, payload_json, state, attempts, COALESCE(last_error, ''), COALESCE(target_workspace, ''), COALESCE(plane_comment_id, ''), COALESCE(sent_at, ''), created_at
 		         FROM outbox WHERE state IN ('pending', 'failed') ORDER BY id ASC`
 	}
 
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := s.reader.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -852,13 +878,26 @@ func (s *Store) ListOutbox(ctx context.Context, includeAll bool) ([]issue.Outbox
 	for rows.Next() {
 		var r issue.OutboxRecord
 		var cr string
-		if err := rows.Scan(&r.ID, &r.ClientID, &r.TicketRef, &r.PayloadJSON, &r.State, &r.Attempts, &r.LastError, &cr); err != nil {
+		if err := rows.Scan(&r.ID, &r.ClientID, &r.TicketRef, &r.PayloadJSON, &r.State, &r.Attempts, &r.LastError, &r.TargetWorkspace, &r.PlaneCommentID, &r.SentAt, &cr); err != nil {
 			continue
 		}
 		r.CreatedAt, _ = time.Parse(time.RFC3339, cr)
 		list = append(list, r)
 	}
 	return list, nil
+}
+
+// UpdateOutboxSent marca un registro outbox como enviado satisfactoriamente.
+func (s *Store) UpdateOutboxSent(ctx context.Context, id int64, planeCommentID string) error {
+	nowStr := time.Now().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx, `UPDATE outbox SET state = 'sent', plane_comment_id = ?, sent_at = ?, attempts = attempts + 1 WHERE id = ?`, planeCommentID, nowStr, id)
+	return err
+}
+
+// UpdateOutboxFailed marca un registro outbox como fallido registrando el error correspondiente.
+func (s *Store) UpdateOutboxFailed(ctx context.Context, id int64, errMsg string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE outbox SET state = 'failed', last_error = ?, attempts = attempts + 1 WHERE id = ?`, errMsg, id)
+	return err
 }
 
 // DropOutboxItem elimina un registro de la cola outbox por su ID numérico.
@@ -883,7 +922,7 @@ func (s *Store) GetTimeReport(ctx context.Context, fromDate, toDate, track, work
 	}
 	query += " ORDER BY date ASC, start_time ASC"
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.reader.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -919,11 +958,11 @@ func (s *Store) GetFlowReport(ctx context.Context, fromDate, toDate string) (*is
 	// Contar tickets completados en el periodo
 	queryDone := `SELECT COUNT(*) FROM issues_cache WHERE state_group = 'completed'`
 	var completed int
-	_ = s.db.QueryRowContext(ctx, queryDone).Scan(&completed)
+	_ = s.reader.QueryRowContext(ctx, queryDone).Scan(&completed)
 
 	// Distribución por estado
 	queryDist := `SELECT state_group, COUNT(*) FROM issues_cache GROUP BY state_group`
-	rows, err := s.db.QueryContext(ctx, queryDist)
+	rows, err := s.reader.QueryContext(ctx, queryDist)
 	dist := make(map[string]int)
 	if err == nil {
 		defer rows.Close()

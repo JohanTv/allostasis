@@ -168,14 +168,58 @@ type FlowReport struct {
 	StateDistribution  map[string]int `json:"state_distribution"`
 }
 
+// ProjectRecord modela un proyecto registrado en Plane/Allostasis.
+type ProjectRecord struct {
+	Identifier string `json:"identifier"`
+	ProjectID  string `json:"project_id"`
+	Name       string `json:"name"`
+	Workspace  string `json:"workspace"`
+}
+
+// StateRecord modela un estado de ticket por proyecto.
+type StateRecord struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"project_id"`
+	Name      string `json:"name"`
+	Slug      string `json:"slug"`
+	GroupName string `json:"group_name"`
+}
+
 // OutboxRecord representa una fila en la tabla outbox de despacho.
 type OutboxRecord struct {
-	ID          int64     `json:"id"`
-	ClientID    string    `json:"client_id"`
-	TicketRef   string    `json:"ticket_ref"`
-	PayloadJSON string    `json:"payload_json"`
-	State       string    `json:"state"`
-	Attempts    int       `json:"attempts"`
-	LastError   string    `json:"last_error,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID              int64     `json:"id"`
+	ClientID        string    `json:"client_id"`
+	TicketRef       string    `json:"ticket_ref"`
+	PayloadJSON     string    `json:"payload_json"`
+	State           string    `json:"state"`
+	Attempts        int       `json:"attempts"`
+	LastError       string    `json:"last_error,omitempty"`
+	TargetWorkspace string    `json:"target_workspace,omitempty"`
+	PlaneCommentID  string    `json:"plane_comment_id,omitempty"`
+	SentAt          string    `json:"sent_at,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+// UserInfo modela los metadatos del usuario devueltos por el tracker remoto.
+type UserInfo struct {
+	ID        string `json:"id"`
+	Email     string `json:"email"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Username  string `json:"username"`
+}
+
+// SyncReport resume las operaciones ejecutadas durante el ciclo de sincronización.
+type SyncReport struct {
+	SentComments   int      `json:"sent_comments"`
+	FailedComments int      `json:"failed_comments"`
+	SyncedIssues   int      `json:"synced_issues"`
+	Errors         []string `json:"errors,omitempty"`
+	Status         string   `json:"status"`
+}
+
+// IssueSnapshot contiene la tarea parseada y su payload JSON original sin procesar.
+type IssueSnapshot struct {
+	Item    WorkItem `json:"item"`
+	RawJSON string   `json:"raw_json"`
 }

@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/allostasis/alo/internal/adapters/gitcli"
-	"github.com/allostasis/alo/internal/adapters/sqlite"
 	"github.com/allostasis/alo/internal/domain/clock"
 	"github.com/allostasis/alo/internal/domain/issue"
 	"github.com/allostasis/alo/internal/domain/ledger"
@@ -44,22 +42,24 @@ type CockpitSnapshot struct {
 	StatusSummary      string                `json:"status_summary"`
 }
 
-// CockpitService orquesta la lectura y mutaciones de alto nivel.
+// CockpitService orquesta la lectura y mutaciones de alto nivel desacoplado de infraestructura.
 type CockpitService struct {
-	store   *sqlite.Store
-	gitExec *gitcli.GitExecutor
-	clock   clock.Clock
+	issueStore   IssueStore
+	worklogStore WorklogStore
+	gitExec      WorkspaceRunner
+	clock        clock.Clock
 }
 
-// NewCockpitService crea el orquestador principal.
-func NewCockpitService(store *sqlite.Store, gitExec *gitcli.GitExecutor, clk clock.Clock) *CockpitService {
+// NewCockpitService crea el orquestador principal inyectando puertos de dominio y aplicación.
+func NewCockpitService(issueStore IssueStore, worklogStore WorklogStore, gitExec WorkspaceRunner, clk clock.Clock) *CockpitService {
 	if clk == nil {
 		clk = clock.NewRealClock()
 	}
 	return &CockpitService{
-		store:   store,
-		gitExec: gitExec,
-		clock:   clk,
+		issueStore:   issueStore,
+		worklogStore: worklogStore,
+		gitExec:      gitExec,
+		clock:        clk,
 	}
 }
 
@@ -69,7 +69,7 @@ func (s *CockpitService) GetSnapshot(ctx context.Context, worktreeRoot string) (
 	todayStr := now.Format("2006-01-02")
 
 	// 1. Obtener tareas activas (in_progress, unstarted, backlog)
-	allIssues, err := s.store.ListIssues(ctx, "")
+	allIssues, err := s.issueStore.ListIssues(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("error al listar tareas: %w", err)
 	}
@@ -94,7 +94,7 @@ func (s *CockpitService) GetSnapshot(ctx context.Context, worktreeRoot string) (
 	}
 
 	// 3. Obtener worklogs de hoy
-	worklogs, err := s.store.GetWorklogs(ctx, "")
+	worklogs, err := s.worklogStore.GetWorklogs(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("error al obtener worklogs: %w", err)
 	}
@@ -164,5 +164,5 @@ func (s *CockpitService) LogTime(ctx context.Context, ticketID string, durationM
 		Topic:  notes,
 	}
 
-	return s.store.SaveWorklog(ctx, entry)
+	return s.worklogStore.SaveWorklog(ctx, entry)
 }

@@ -4,12 +4,27 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/allostasis/alo/internal/app"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+type snapshotMsg struct {
+	snap *app.CockpitSnapshot
+	err  error
+}
+
+func fetchSnapshotCmd(svc *app.CockpitService) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		snap, err := svc.GetSnapshot(ctx, ".worktrees")
+		return snapshotMsg{snap: snap, err: err}
+	}
+}
 
 type model struct {
 	service    *app.CockpitService
@@ -79,22 +94,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "r":
-			// Refrescar snapshot
-			ctx := context.Background()
-			snap, err := m.service.GetSnapshot(ctx, ".worktrees")
-			if err == nil {
-				m.snapshot = snap
-				var rows []table.Row
-				for _, it := range snap.ActiveIssues {
-					rows = append(rows, table.Row{
-						it.Key,
-						string(it.State),
-						it.Priority,
-						it.Title,
-					})
-				}
-				m.issueTable.SetRows(rows)
+			// Despachar comando asíncrono para no bloquear el loop de renderizado
+			return m, fetchSnapshotCmd(m.service)
+		}
+	case snapshotMsg:
+		if msg.err == nil && msg.snap != nil {
+			m.snapshot = msg.snap
+			var rows []table.Row
+			for _, it := range msg.snap.ActiveIssues {
+				rows = append(rows, table.Row{
+					it.Key,
+					string(it.State),
+					it.Priority,
+					it.Title,
+				})
 			}
+			m.issueTable.SetRows(rows)
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width

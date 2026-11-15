@@ -7,19 +7,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/allostasis/alo/internal/adapters/sqlite"
-	"github.com/allostasis/alo/internal/adapters/tracker_plane"
 	"github.com/allostasis/alo/internal/domain/issue"
 )
 
 // TrackerService orquesta la gestión soberana de tareas (local-first con sincronización upstream).
 type TrackerService struct {
-	store  *sqlite.Store
-	client *tracker_plane.Client
+	store  IssueStore
+	client RemoteTrackerClient
 }
 
-// NewTrackerService construye el servicio orquestador de tareas.
-func NewTrackerService(store *sqlite.Store, client *tracker_plane.Client) *TrackerService {
+// NewTrackerService construye el servicio orquestador de tareas basado en interfaces hexagonales.
+func NewTrackerService(store IssueStore, client RemoteTrackerClient) *TrackerService {
 	return &TrackerService{
 		store:  store,
 		client: client,
@@ -81,14 +79,14 @@ func (s *TrackerService) Create(ctx context.Context, input issue.CreateIssueInpu
 	// 1. Resolver projectID
 	var projectID string
 	pRec, err := s.store.GetProject(ctx, input.ProjectKey)
-	if err == nil {
+	if err == nil && pRec != nil {
 		projectID = pRec.ProjectID
 	}
 
 	// 2. Resolver stateID si se indicó StateName
 	var stateID, stateGroup string
 	if input.StateName != "" && projectID != "" {
-		if stRec, err := s.store.GetState(ctx, projectID, input.StateName); err == nil {
+		if stRec, err := s.store.GetState(ctx, projectID, input.StateName); err == nil && stRec != nil {
 			stateID = stRec.ID
 			stateGroup = stRec.GroupName
 		}
@@ -100,7 +98,7 @@ func (s *TrackerService) Create(ctx context.Context, input issue.CreateIssueInpu
 	// 3. Intentar creación remota en Plane CE si el cliente está disponible
 	if s.client != nil && projectID != "" {
 		created, err := s.client.CreateIssueRemote(ctx, projectID, input, stateID)
-		if err == nil {
+		if err == nil && created != nil {
 			_ = s.store.SaveIssue(ctx, created)
 			rawJSON, _ := json.Marshal(created)
 			_ = s.store.SaveIssueSnapshot(ctx, created.ID, created.Key, string(rawJSON))
@@ -134,14 +132,7 @@ func (s *TrackerService) Create(ctx context.Context, input issue.CreateIssueInpu
 
 	// Encolar evento outbox para reconciliación diferida
 	payloadBytes, _ := json.Marshal(input)
-	outboxEvent := &issue.OutboxEvent{
-		ID:        fmt.Sprintf("outbox-%d", nowUnix),
-		WorkItem:  localKey,
-		Payload:   string(payloadBytes),
-		Status:    issue.OutboxPending,
-		CreatedAt: time.Now(),
-	}
-	_ = s.store.EnqueueOutbox(ctx, outboxEvent)
+	_ = s.store.EnqueueOutbox(ctx, fmt.Sprintf("client-%d", nowUnix), localKey, string(payloadBytes), "")
 
 	return localItem, nil
 }
@@ -160,7 +151,7 @@ func (s *TrackerService) Update(ctx context.Context, key string, input issue.Upd
 	var stateID string
 	if input.StateName != nil && *input.StateName != "" {
 		if item.ProjectID != "" {
-			if stRec, err := s.store.GetState(ctx, item.ProjectID, *input.StateName); err == nil {
+			if stRec, err := s.store.GetState(ctx, item.ProjectID, *input.StateName); err == nil && stRec != nil {
 				stateID = stRec.ID
 				item.StateName = stRec.Name
 				item.StateGroup = stRec.GroupName
@@ -200,14 +191,110 @@ func (s *TrackerService) Update(ctx context.Context, key string, input issue.Upd
 	return item, nil
 }
 
-// Sync sincroniza proyectos, estados y tareas desde Plane CE hacia la base de datos local.
-func (s *TrackerService) Sync(ctx context.Context, projectKey string, allProjects bool) (int, error) {
+// SyncProjects descarga el catálogo de proyectos y los almacena localmente.
+func (s *TrackerService) SyncProjects(ctx context.Context) ([]issue.ProjectRecord, error) {
 	if s.client == nil {
-		return 0, fmt.Errorf("cliente de Plane no configurado")
+		return nil, fmt.Errorf("cliente de tracker remoto no configurado")
+	}
+	projects, err := s.client.FetchProjects(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if s.store != nil {
+		for _, p := range projects {
+			_ = s.store.SaveProject(ctx, p)
+		}
+	}
+	return projects, nil
+}
+
+// SyncStates descarga los estados de un proyecto y los almacena localmente.
+func (s *TrackerService) SyncStates(ctx context.Context, projectID string) ([]issue.StateRecord, error) {
+	if s.client == nil {
+		return nil, fmt.Errorf("cliente de tracker remoto no configurado")
+	}
+	states, err := s.client.FetchStates(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if s.store != nil {
+		for _, st := range states {
+			_ = s.store.SaveState(ctx, st)
+		}
+	}
+	return states, nil
+}
+
+// SyncLabels descarga las etiquetas de un proyecto y las almacena localmente.
+func (s *TrackerService) SyncLabels(ctx context.Context, projectID string) (int, error) {
+	if s.client == nil {
+		return 0, fmt.Errorf("cliente de tracker remoto no configurado")
+	}
+	labels, err := s.client.FetchLabels(ctx, projectID)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	if s.store != nil {
+		for _, l := range labels {
+			if err := s.store.SaveLabel(ctx, l); err == nil {
+				count++
+			}
+		}
+	}
+	return count, nil
+}
+
+// SyncIssues descarga las tareas de un proyecto y las sincroniza en caché y snapshots.
+func (s *TrackerService) SyncIssues(ctx context.Context, projectKey string, limit int) (int, error) {
+	if s.client == nil {
+		return 0, fmt.Errorf("cliente de tracker remoto no configurado")
+	}
+	projectKey = strings.ToUpper(strings.TrimSpace(projectKey))
+	var projectID string
+	if s.store != nil {
+		if pRec, err := s.store.GetProject(ctx, projectKey); err == nil && pRec != nil {
+			projectID = pRec.ProjectID
+		}
+	}
+	if projectID == "" {
+		projects, err := s.SyncProjects(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("no se pudo resolver proyecto %s: %w", projectKey, err)
+		}
+		for _, p := range projects {
+			if p.Identifier == projectKey {
+				projectID = p.ProjectID
+				break
+			}
+		}
+	}
+	if projectID == "" {
+		return 0, fmt.Errorf("proyecto %s no encontrado en Plane", projectKey)
 	}
 
-	// 1. Sincronizar catálogo de proyectos
-	projects, err := s.client.SyncProjects(ctx, s.store)
+	_, _ = s.SyncStates(ctx, projectID)
+
+	snapshots, err := s.client.FetchIssues(ctx, projectID, projectKey, limit)
+	if err != nil {
+		return 0, err
+	}
+
+	syncedCount := 0
+	if s.store != nil {
+		for _, snap := range snapshots {
+			if err := s.store.SaveIssue(ctx, &snap.Item); err == nil {
+				_ = s.store.SaveIssueSnapshot(ctx, snap.Item.ID, snap.Item.Key, snap.RawJSON)
+				syncedCount++
+			}
+		}
+	}
+	return syncedCount, nil
+}
+
+// Sync sincroniza proyectos, estados y tareas desde Plane CE hacia la base de datos local.
+func (s *TrackerService) Sync(ctx context.Context, projectKey string, allProjects bool) (int, error) {
+	projects, err := s.SyncProjects(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("error sincronizando proyectos: %w", err)
 	}
@@ -215,7 +302,7 @@ func (s *TrackerService) Sync(ctx context.Context, projectKey string, allProject
 	totalSynced := 0
 	if allProjects {
 		for _, p := range projects {
-			count, err := s.client.SyncIssues(ctx, s.store, p.Identifier, 100)
+			count, err := s.SyncIssues(ctx, p.Identifier, 100)
 			if err == nil {
 				totalSynced += count
 			}
@@ -224,7 +311,7 @@ func (s *TrackerService) Sync(ctx context.Context, projectKey string, allProject
 		if projectKey == "" {
 			projectKey = "OMNIFY"
 		}
-		count, err := s.client.SyncIssues(ctx, s.store, projectKey, 100)
+		count, err := s.SyncIssues(ctx, projectKey, 100)
 		if err != nil {
 			return 0, err
 		}
@@ -234,8 +321,59 @@ func (s *TrackerService) Sync(ctx context.Context, projectKey string, allProject
 	return totalSynced, nil
 }
 
+// FlushOutbox publica los comentarios y registros diferidos en la cola outbox hacia el tracker remoto.
+func (s *TrackerService) FlushOutbox(ctx context.Context, limit int) (*issue.SyncReport, error) {
+	report := &issue.SyncReport{Status: "completed"}
+	if s.store == nil {
+		return report, fmt.Errorf("almacenamiento no inicializado")
+	}
+	if s.client == nil {
+		report.Status = "skipped_no_credentials"
+		report.Errors = append(report.Errors, "cliente de tracker remoto no configurado: omitiendo flush")
+		return report, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	pending, err := s.store.ListOutbox(ctx, false)
+	if err != nil {
+		return nil, fmt.Errorf("error al consultar cola outbox: %w", err)
+	}
+
+	processed := 0
+	for _, item := range pending {
+		if processed >= limit {
+			break
+		}
+		processed++
+
+		issueItem, err := s.store.GetIssue(ctx, item.TicketRef)
+		if err != nil || issueItem == nil || issueItem.ID == "" || issueItem.ProjectID == "" {
+			report.FailedComments++
+			errMsg := fmt.Sprintf("no se encontró issue ID para %s", item.TicketRef)
+			report.Errors = append(report.Errors, errMsg)
+			_ = s.store.UpdateOutboxFailed(ctx, item.ID, errMsg)
+			continue
+		}
+
+		commentID, err := s.client.SendCommentRaw(ctx, item.TargetWorkspace, issueItem.ProjectID, issueItem.ID, item.PayloadJSON)
+		if err != nil {
+			report.FailedComments++
+			report.Errors = append(report.Errors, err.Error())
+			_ = s.store.UpdateOutboxFailed(ctx, item.ID, err.Error())
+			continue
+		}
+
+		_ = s.store.UpdateOutboxSent(ctx, item.ID, commentID)
+		report.SentComments++
+	}
+
+	return report, nil
+}
+
 // Whoami consulta la identidad y validez de la sesión en Plane CE.
-func (s *TrackerService) Whoami(ctx context.Context) (*tracker_plane.UserInfo, error) {
+func (s *TrackerService) Whoami(ctx context.Context) (*issue.UserInfo, error) {
 	if s.client == nil {
 		return nil, fmt.Errorf("cliente de Plane no configurado")
 	}
@@ -243,7 +381,7 @@ func (s *TrackerService) Whoami(ctx context.Context) (*tracker_plane.UserInfo, e
 }
 
 // Projects retorna los proyectos registrados en la caché local.
-func (s *TrackerService) Projects(ctx context.Context) ([]sqlite.ProjectRecord, error) {
+func (s *TrackerService) Projects(ctx context.Context) ([]issue.ProjectRecord, error) {
 	return s.store.ListProjects(ctx)
 }
 
@@ -251,13 +389,13 @@ func (s *TrackerService) Projects(ctx context.Context) ([]sqlite.ProjectRecord, 
 func (s *TrackerService) Labels(ctx context.Context, projectKey string, refresh bool) ([]issue.Label, error) {
 	var projectID string
 	if projectKey != "" {
-		if p, err := s.store.GetProject(ctx, strings.ToUpper(projectKey)); err == nil {
+		if p, err := s.store.GetProject(ctx, strings.ToUpper(projectKey)); err == nil && p != nil {
 			projectID = p.ProjectID
 		}
 	}
 
 	if refresh && s.client != nil && projectID != "" {
-		_, _ = s.client.SyncLabels(ctx, s.store, projectID)
+		_, _ = s.SyncLabels(ctx, projectID)
 	}
 
 	return s.store.ListLabels(ctx, projectID)
@@ -348,7 +486,7 @@ func (s *TrackerService) ListLinks(ctx context.Context, key string) ([]issue.Lin
 // DeleteLink remueve un hipervínculo por su UUID.
 func (s *TrackerService) DeleteLink(ctx context.Context, key, linkID string) error {
 	item, err := s.store.GetIssue(ctx, key)
-	if err == nil && s.client != nil && item.ProjectID != "" && item.ID != "" && !strings.HasPrefix(item.ID, "local-") {
+	if err == nil && item != nil && s.client != nil && item.ProjectID != "" && item.ID != "" && !strings.HasPrefix(item.ID, "local-") {
 		_ = s.client.DeleteLinkRemote(ctx, item.ProjectID, item.ID, linkID)
 	}
 	return s.store.DeleteLink(ctx, linkID)

@@ -26,7 +26,7 @@ func TestCockpitService_SnapshotAndLogTime(t *testing.T) {
 	fixedTime := time.Date(2026, 11, 15, 14, 0, 0, 0, time.UTC)
 	clk := clock.NewFrozenClock(fixedTime)
 
-	svc := app.NewCockpitService(store, nil, clk)
+	svc := app.NewCockpitService(store, store, nil, clk)
 
 	// 3. Crear tareas activas
 	task1 := &issue.WorkItem{

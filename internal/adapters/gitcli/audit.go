@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
-	"database/sql"
 	"fmt"
 	"io"
 	"os"
@@ -17,7 +16,6 @@ import (
 	"time"
 
 	"github.com/allostasis/alo/internal/domain/workspace"
-	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
 var (
@@ -171,35 +169,11 @@ func (e *GitExecutor) AuditRepoState(ctx context.Context, repoDir, preferredBase
 	}, nil
 }
 
-// getTicketStatusFromDB busca el estado de un ticket en la base local SQLite si existe.
-func getTicketStatusFromDB(ticketID, dbPath string) (stateGroup, stateName string) {
-	if ticketID == "" {
-		return "", ""
-	}
-	if dbPath == "" {
-		home, _ := os.UserHomeDir()
-		dbPath = filepath.Join(home, ".cache", "plane", "worklogs.db")
-	}
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return "", ""
-	}
-
-	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
-	if err != nil {
-		return "", ""
-	}
-	defer db.Close()
-
-	var sg, sn string
-	err = db.QueryRow(`SELECT state_group, state_name FROM issues_cache WHERE ticket_id = ? LIMIT 1`, ticketID).Scan(&sg, &sn)
-	if err == nil {
-		return sg, sn
-	}
-	return "", ""
-}
+// StatusProvider es una función inyectable que provee (stateGroup, stateName) para un ticket sin acoplamiento a base de datos.
+type StatusProvider = func(ticketID string) (stateGroup, stateName string)
 
 // AuditContainer audita un contenedor (.worktrees/<TICKET>-<slug>) clasificando su salud e idoneidad para poda.
-func (e *GitExecutor) AuditContainer(ctx context.Context, containerPath, preferredBase, dbPath string) (*workspace.ContainerAudit, error) {
+func (e *GitExecutor) AuditContainer(ctx context.Context, containerPath, preferredBase string, statusProvider StatusProvider) (*workspace.ContainerAudit, error) {
 	cname := filepath.Base(containerPath)
 	ticketID := extractTicketID(cname)
 
@@ -237,7 +211,10 @@ func (e *GitExecutor) AuditContainer(ctx context.Context, containerPath, preferr
 		return nil, nil
 	}
 
-	planeStateGroup, planeStateName := getTicketStatusFromDB(ticketID, dbPath)
+	var planeStateGroup, planeStateName string
+	if statusProvider != nil {
+		planeStateGroup, planeStateName = statusProvider(ticketID)
+	}
 	ticketIsCancelled := planeStateGroup == "cancelled"
 
 	var category workspace.ContainerCategory
@@ -399,7 +376,7 @@ func (e *GitExecutor) SyncWorktreeRemotes(ctx context.Context, baseDir, target s
 }
 
 // AuditContainers inspecciona y audita todos los contenedores presentes en baseDir.
-func (e *GitExecutor) AuditContainers(ctx context.Context, baseDir, target, preferredBase, dbPath string, noFetch bool) ([]workspace.ContainerAudit, error) {
+func (e *GitExecutor) AuditContainers(ctx context.Context, baseDir, target, preferredBase string, noFetch bool, statusProvider StatusProvider) ([]workspace.ContainerAudit, error) {
 	absBase, err := filepath.Abs(baseDir)
 	if err != nil {
 		return nil, err
@@ -425,7 +402,7 @@ func (e *GitExecutor) AuditContainers(ctx context.Context, baseDir, target, pref
 			continue
 		}
 		cPath := filepath.Join(absBase, entry.Name())
-		cAudit, err := e.AuditContainer(ctx, cPath, preferredBase, dbPath)
+		cAudit, err := e.AuditContainer(ctx, cPath, preferredBase, statusProvider)
 		if err != nil || cAudit == nil {
 			continue
 		}
@@ -450,8 +427,8 @@ func (e *GitExecutor) AuditContainers(ctx context.Context, baseDir, target, pref
 }
 
 // PruneContainers ejecuta o simula la poda inteligente de contenedores de worktree.
-func (e *GitExecutor) PruneContainers(ctx context.Context, baseDir, target string, execute, includeStale, noFetch bool, backupDir string) (*workspace.PruneResult, error) {
-	containers, err := e.AuditContainers(ctx, baseDir, target, "", "", noFetch)
+func (e *GitExecutor) PruneContainers(ctx context.Context, baseDir, target, preferredBase string, execute, includeStale, noFetch bool, backupDir string, statusProvider StatusProvider) (*workspace.PruneResult, error) {
+	containers, err := e.AuditContainers(ctx, baseDir, target, preferredBase, noFetch, statusProvider)
 	if err != nil {
 		return nil, err
 	}

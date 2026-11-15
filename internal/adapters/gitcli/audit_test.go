@@ -20,7 +20,7 @@ func TestAuditContainers_EmptyDir(t *testing.T) {
 	runner := NewRunner(10 * time.Second)
 	executor := NewGitExecutor(runner)
 
-	audited, err := executor.AuditContainers(context.Background(), tmpDir, "", "", "", true)
+	audited, err := executor.AuditContainers(context.Background(), tmpDir, "", "", true, nil)
 	if err != nil {
 		t.Fatalf("AuditContainers falló inesperadamente: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestAuditContainers_LifecycleAndPrune(t *testing.T) {
 	_, _, _ = runner.Run(ctx, wtRepoDir, "commit", "-m", "feat: work in progress")
 
 	// 3. Auditar inicialmente (rama no mergeada y limpia)
-	audited, err := executor.AuditContainers(ctx, wtRoot, "", "main", "", true)
+	audited, err := executor.AuditContainers(ctx, wtRoot, "", "main", true, nil)
 	if err != nil {
 		t.Fatalf("AuditContainers falló: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestAuditContainers_LifecycleAndPrune(t *testing.T) {
 	}
 
 	// 4. Test Prune Dry-Run (bloqueado porque está EN_CURSO)
-	pruneDry, err := executor.PruneContainers(ctx, wtRoot, "ALO-100", false, false, true, "")
+	pruneDry, err := executor.PruneContainers(ctx, wtRoot, "ALO-100", "", false, false, true, "", nil)
 	if err != nil {
 		t.Fatalf("PruneContainers dry-run falló: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestAuditContainers_LifecycleAndPrune(t *testing.T) {
 	_, _, _ = runner.Run(ctx, baseRepo, "merge", "feat/alo-100-test")
 
 	// 6. Ahora auditar de nuevo: debe ser SEGURO_PARA_PODAR
-	auditedMerged, err := executor.AuditContainers(ctx, wtRoot, "", "main", "", true)
+	auditedMerged, err := executor.AuditContainers(ctx, wtRoot, "", "main", true, nil)
 	if err != nil {
 		t.Fatalf("AuditContainers post-merge falló: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestAuditContainers_LifecycleAndPrune(t *testing.T) {
 	}
 
 	// 7. Prune Execute real
-	pruneExec, err := executor.PruneContainers(ctx, wtRoot, "ALO-100", true, false, true, "")
+	pruneExec, err := executor.PruneContainers(ctx, wtRoot, "ALO-100", "", true, false, true, "", nil)
 	if err != nil {
 		t.Fatalf("PruneContainers execute falló: %v", err)
 	}

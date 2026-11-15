@@ -3,7 +3,6 @@ package tracker_plane
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/allostasis/alo/internal/adapters/sqlite"
 	"github.com/allostasis/alo/internal/domain/issue"
 )
 
@@ -24,14 +22,11 @@ type Config struct {
 	Timeout   time.Duration
 }
 
-// UserInfo representa los metadatos de usuario devueltos por Plane CE.
-type UserInfo struct {
-	ID        string `json:"id"`
-	Email     string `json:"email"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	Username  string `json:"username"`
-}
+// UserInfo representa los metadatos de usuario devueltos por Plane CE (alias a issue.UserInfo).
+type UserInfo = issue.UserInfo
+
+// SyncReport resume las operaciones ejecutadas durante el ciclo de sincronización (alias a issue.SyncReport).
+type SyncReport = issue.SyncReport
 
 // LoadConfigFromEnv carga la configuración desde las variables de entorno canónicas.
 func LoadConfigFromEnv() Config {
@@ -59,7 +54,7 @@ func LoadConfigFromEnv() Config {
 	}
 }
 
-// Client gestiona el transporte HTTP seguro con la API REST de Plane CE.
+// Client gestiona el transporte HTTP puro con la API REST de Plane CE (sin acoplamiento a bases de datos).
 type Client struct {
 	cfg        Config
 	httpClient *http.Client
@@ -76,117 +71,6 @@ func NewClient(cfg Config) *Client {
 			Timeout: cfg.Timeout,
 		},
 	}
-}
-
-// SyncReport resume las operaciones ejecutadas durante el ciclo de sincronización.
-type SyncReport struct {
-	SentComments   int      `json:"sent_comments"`
-	FailedComments int      `json:"failed_comments"`
-	SyncedIssues   int      `json:"synced_issues"`
-	Errors         []string `json:"errors,omitempty"`
-	Status         string   `json:"status"`
-}
-
-// FlushOutbox publica los comentarios y registros pendientes en la cola outbox hacia Plane.
-func (c *Client) FlushOutbox(ctx context.Context, db *sql.DB, limit int) (*SyncReport, error) {
-	report := &SyncReport{Status: "completed"}
-	if limit <= 0 {
-		limit = 20
-	}
-
-	if c.cfg.APIKey == "" {
-		report.Status = "skipped_no_credentials"
-		report.Errors = append(report.Errors, "PLANE_API_KEY no configurada en el entorno: omitiendo flush remoto hacia Plane")
-		return report, nil
-	}
-
-	query := `SELECT id, client_id, ticket_ref, payload_json, COALESCE(target_workspace, ?)
-	          FROM outbox WHERE state IN ('pending', 'failed') ORDER BY id ASC LIMIT ?`
-	rows, err := db.QueryContext(ctx, query, c.cfg.Workspace, limit)
-	if err != nil {
-		return nil, fmt.Errorf("error al consultar cola outbox: %w", err)
-	}
-	defer rows.Close()
-
-	type outboxRow struct {
-		id          int64
-		clientID    string
-		ticketRef   string
-		payloadJSON string
-		targetWS    string
-	}
-	var pending []outboxRow
-
-	for rows.Next() {
-		var r outboxRow
-		if err := rows.Scan(&r.id, &r.clientID, &r.ticketRef, &r.payloadJSON, &r.targetWS); err != nil {
-			continue
-		}
-		pending = append(pending, r)
-	}
-
-	for _, item := range pending {
-		// Obtener project_id y issue UUID para el ticket_ref
-		var issueID, projectID string
-		lookupQuery := `SELECT id, project_id FROM issues_cache WHERE ticket_id = ? LIMIT 1`
-		err := db.QueryRowContext(ctx, lookupQuery, item.ticketRef).Scan(&issueID, &projectID)
-		if err != nil {
-			report.FailedComments++
-			errMsg := fmt.Sprintf("no se encontró issue ID para %s: %v", item.ticketRef, err)
-			report.Errors = append(report.Errors, errMsg)
-			_, _ = db.ExecContext(ctx, `UPDATE outbox SET state = 'failed', last_error = ?, attempts = attempts + 1 WHERE id = ?`, errMsg, item.id)
-			continue
-		}
-
-		// URL canónica de comentarios en Plane CE
-		url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issues/%s/comments/", c.cfg.BaseURL, item.targetWS, projectID, issueID)
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBufferString(item.payloadJSON))
-		if err != nil {
-			report.FailedComments++
-			report.Errors = append(report.Errors, err.Error())
-			continue
-		}
-
-		req.Header.Set("x-api-key", c.cfg.APIKey)
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			report.FailedComments++
-			errMsg := fmt.Sprintf("error de red al enviar a Plane: %v", err)
-			report.Errors = append(report.Errors, errMsg)
-			_, _ = db.ExecContext(ctx, `UPDATE outbox SET state = 'failed', last_error = ?, attempts = attempts + 1 WHERE id = ?`, errMsg, item.id)
-			continue
-		}
-
-		respBytes, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
-			var respPayload map[string]interface{}
-			commentID := ""
-			if json.Unmarshal(respBytes, &respPayload) == nil {
-				if cid, ok := respPayload["id"].(string); ok {
-					commentID = cid
-				}
-			}
-
-			nowStr := time.Now().Format(time.RFC3339)
-			_, _ = db.ExecContext(ctx, `UPDATE outbox SET state = 'sent', plane_comment_id = ?, sent_at = ?, attempts = attempts + 1 WHERE id = ?`, commentID, nowStr, item.id)
-			report.SentComments++
-		} else if resp.StatusCode == http.StatusUnauthorized {
-			report.Status = "unauthorized"
-			report.Errors = append(report.Errors, "Plane rechazó las credenciales (HTTP 401): verifica PLANE_API_KEY")
-			return report, fmt.Errorf("autenticación fallida en Plane: HTTP 401")
-		} else {
-			report.FailedComments++
-			errMsg := fmt.Sprintf("Plane retornó HTTP %d: %s", resp.StatusCode, string(respBytes))
-			report.Errors = append(report.Errors, errMsg)
-			_, _ = db.ExecContext(ctx, `UPDATE outbox SET state = 'failed', last_error = ?, attempts = attempts + 1 WHERE id = ?`, errMsg, item.id)
-		}
-	}
-
-	return report, nil
 }
 
 // Whoami valida la conectividad y las credenciales con Plane CE retornando datos del usuario actual.
@@ -222,8 +106,8 @@ func (c *Client) Whoami(ctx context.Context) (*UserInfo, error) {
 	return &user, nil
 }
 
-// SyncProjects descarga el catálogo de proyectos del workspace y los persiste en SQLite.
-func (c *Client) SyncProjects(ctx context.Context, store *sqlite.Store) ([]sqlite.ProjectRecord, error) {
+// FetchProjects descarga el catálogo de proyectos del workspace desde Plane CE.
+func (c *Client) FetchProjects(ctx context.Context) ([]issue.ProjectRecord, error) {
 	if c.cfg.APIKey == "" {
 		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
 	}
@@ -257,7 +141,7 @@ func (c *Client) SyncProjects(ctx context.Context, store *sqlite.Store) ([]sqlit
 		_ = json.Unmarshal(bodyBytes, &rawProjects)
 	}
 
-	var records []sqlite.ProjectRecord
+	var records []issue.ProjectRecord
 	for _, p := range rawProjects {
 		id, _ := p["id"].(string)
 		identifier, _ := p["identifier"].(string)
@@ -265,22 +149,19 @@ func (c *Client) SyncProjects(ctx context.Context, store *sqlite.Store) ([]sqlit
 		if id == "" || identifier == "" {
 			continue
 		}
-		rec := sqlite.ProjectRecord{
+		rec := issue.ProjectRecord{
 			Identifier: strings.ToUpper(identifier),
 			ProjectID:  id,
 			Name:       name,
 			Workspace:  c.cfg.Workspace,
-		}
-		if store != nil {
-			_ = store.SaveProject(ctx, rec)
 		}
 		records = append(records, rec)
 	}
 	return records, nil
 }
 
-// SyncStates descarga los estados de un proyecto específico y los persiste en SQLite.
-func (c *Client) SyncStates(ctx context.Context, store *sqlite.Store, projectID string) ([]sqlite.StateRecord, error) {
+// FetchStates descarga los estados de un proyecto específico desde Plane CE.
+func (c *Client) FetchStates(ctx context.Context, projectID string) ([]issue.StateRecord, error) {
 	if c.cfg.APIKey == "" {
 		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
 	}
@@ -313,7 +194,7 @@ func (c *Client) SyncStates(ctx context.Context, store *sqlite.Store, projectID 
 		_ = json.Unmarshal(bodyBytes, &rawStates)
 	}
 
-	var records []sqlite.StateRecord
+	var records []issue.StateRecord
 	for _, s := range rawStates {
 		id, _ := s["id"].(string)
 		name, _ := s["name"].(string)
@@ -322,72 +203,86 @@ func (c *Client) SyncStates(ctx context.Context, store *sqlite.Store, projectID 
 		if id == "" || name == "" {
 			continue
 		}
-		rec := sqlite.StateRecord{
+		rec := issue.StateRecord{
 			ID:        id,
 			ProjectID: projectID,
 			Name:      name,
 			Slug:      slug,
 			GroupName: group,
 		}
-		if store != nil {
-			_ = store.SaveState(ctx, rec)
-		}
 		records = append(records, rec)
 	}
 	return records, nil
 }
 
-// SyncIssues descarga las tareas actualizadas de un proyecto y las guarda en issues_cache e issue_snapshots.
-func (c *Client) SyncIssues(ctx context.Context, store *sqlite.Store, projectKey string, limit int) (int, error) {
+// FetchLabels descarga las etiquetas de un proyecto desde Plane CE.
+func (c *Client) FetchLabels(ctx context.Context, projectID string) ([]issue.Label, error) {
 	if c.cfg.APIKey == "" {
-		return 0, fmt.Errorf("PLANE_API_KEY no configurada")
+		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
 	}
-	projectKey = strings.ToUpper(strings.TrimSpace(projectKey))
 
-	// Resolver projectID
-	var projectID string
-	pRec, err := store.GetProject(ctx, projectKey)
-	if err == nil {
-		projectID = pRec.ProjectID
-	} else {
-		// Intentar sincronizar proyectos
-		projects, errSync := c.SyncProjects(ctx, store)
-		if errSync != nil {
-			return 0, fmt.Errorf("no se pudo resolver proyecto %s: %w", projectKey, errSync)
+	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issue-labels/", c.cfg.BaseURL, c.cfg.Workspace, projectID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("x-api-key", c.cfg.APIKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("error al obtener etiquetas de Plane (HTTP %d)", resp.StatusCode)
+	}
+
+	var res []map[string]interface{}
+	respBytes, _ := io.ReadAll(resp.Body)
+	_ = json.Unmarshal(respBytes, &res)
+
+	var labels []issue.Label
+	for _, l := range res {
+		id, _ := l["id"].(string)
+		name, _ := l["name"].(string)
+		color, _ := l["color"].(string)
+		if id != "" && name != "" {
+			labels = append(labels, issue.Label{
+				ID:        id,
+				ProjectID: projectID,
+				Name:      name,
+				Color:     color,
+			})
 		}
-		for _, p := range projects {
-			if p.Identifier == projectKey {
-				projectID = p.ProjectID
-				break
-			}
-		}
 	}
-	if projectID == "" {
-		return 0, fmt.Errorf("proyecto %s no encontrado en Plane", projectKey)
+	return labels, nil
+}
+
+// FetchIssues descarga las tareas actualizadas de un proyecto desde Plane CE.
+func (c *Client) FetchIssues(ctx context.Context, projectID, projectKey string, limit int) ([]issue.IssueSnapshot, error) {
+	if c.cfg.APIKey == "" {
+		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
 	}
-
-	// Sincronizar estados asociados al proyecto
-	_, _ = c.SyncStates(ctx, store, projectID)
-
 	if limit <= 0 {
 		limit = 100
 	}
 	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issues/?order_by=-updated_at&per_page=%d", c.cfg.BaseURL, c.cfg.Workspace, projectID, limit)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	req.Header.Set("x-api-key", c.cfg.APIKey)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("error de red al descargar tareas de Plane: %w", err)
+		return nil, fmt.Errorf("error de red al descargar tareas de Plane: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("Plane retornó HTTP %d al listar tareas: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("Plane retornó HTTP %d al listar tareas: %s", resp.StatusCode, string(body))
 	}
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
@@ -401,7 +296,7 @@ func (c *Client) SyncIssues(ctx context.Context, store *sqlite.Store, projectKey
 		_ = json.Unmarshal(bodyBytes, &rawIssues)
 	}
 
-	syncedCount := 0
+	var snapshots []issue.IssueSnapshot
 	for _, it := range rawIssues {
 		id, _ := it["id"].(string)
 		name, _ := it["name"].(string)
@@ -424,7 +319,7 @@ func (c *Client) SyncIssues(ctx context.Context, store *sqlite.Store, projectKey
 			}
 		}
 
-		item := &issue.WorkItem{
+		item := issue.WorkItem{
 			ID:         id,
 			Key:        ticketKey,
 			ProjectID:  projectID,
@@ -437,7 +332,6 @@ func (c *Client) SyncIssues(ctx context.Context, store *sqlite.Store, projectKey
 			Priority:   priority,
 		}
 
-		// Extraer labels
 		if labelsArr, ok := it["labels"].([]interface{}); ok {
 			var labelNames []string
 			for _, l := range labelsArr {
@@ -453,14 +347,56 @@ func (c *Client) SyncIssues(ctx context.Context, store *sqlite.Store, projectKey
 			item.LabelsCSV = strings.Join(labelNames, ",")
 		}
 
-		if err := store.SaveIssue(ctx, item); err == nil {
-			rawJSON, _ := json.Marshal(it)
-			_ = store.SaveIssueSnapshot(ctx, id, ticketKey, string(rawJSON))
-			syncedCount++
-		}
+		rawJSONBytes, _ := json.Marshal(it)
+		snapshots = append(snapshots, issue.IssueSnapshot{
+			Item:    item,
+			RawJSON: string(rawJSONBytes),
+		})
 	}
 
-	return syncedCount, nil
+	return snapshots, nil
+}
+
+// SendCommentRaw envía un payload JSON de comentario hacia Plane CE sin intermediación de base de datos.
+func (c *Client) SendCommentRaw(ctx context.Context, targetWS, projectID, issueID, payloadJSON string) (string, error) {
+	if c.cfg.APIKey == "" {
+		return "", fmt.Errorf("PLANE_API_KEY no configurada")
+	}
+	if targetWS == "" {
+		targetWS = c.cfg.Workspace
+	}
+
+	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issues/%s/comments/", c.cfg.BaseURL, targetWS, projectID, issueID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBufferString(payloadJSON))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("x-api-key", c.cfg.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("error de red al enviar a Plane: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBytes, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		var respPayload map[string]interface{}
+		commentID := ""
+		if json.Unmarshal(respBytes, &respPayload) == nil {
+			if cid, ok := respPayload["id"].(string); ok {
+				commentID = cid
+			}
+		}
+		return commentID, nil
+	} else if resp.StatusCode == http.StatusUnauthorized {
+		return "", fmt.Errorf("autenticación rechazada en Plane (HTTP 401): verifica PLANE_API_KEY")
+	}
+
+	return "", fmt.Errorf("Plane retornó HTTP %d: %s", resp.StatusCode, string(respBytes))
 }
 
 // CreateIssueRemote crea una tarea en Plane CE y retorna el modelo creado.
@@ -756,49 +692,4 @@ func (c *Client) DeleteCommentRemote(ctx context.Context, projectID, issueID, co
 		return fmt.Errorf("error al eliminar comentario (HTTP %d)", resp.StatusCode)
 	}
 	return nil
-}
-
-// SyncLabels sincroniza las etiquetas de un proyecto desde Plane CE hacia la base local SQLite.
-func (c *Client) SyncLabels(ctx context.Context, store *sqlite.Store, projectID string) (int, error) {
-	if c.cfg.APIKey == "" {
-		return 0, fmt.Errorf("PLANE_API_KEY no configurada")
-	}
-
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issue-labels/", c.cfg.BaseURL, c.cfg.Workspace, projectID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("x-api-key", c.cfg.APIKey)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("error al obtener etiquetas de Plane (HTTP %d)", resp.StatusCode)
-	}
-
-	var res []map[string]interface{}
-	respBytes, _ := io.ReadAll(resp.Body)
-	_ = json.Unmarshal(respBytes, &res)
-
-	count := 0
-	for _, l := range res {
-		id, _ := l["id"].(string)
-		name, _ := l["name"].(string)
-		color, _ := l["color"].(string)
-		if id != "" && name != "" {
-			_ = store.SaveLabel(ctx, issue.Label{
-				ID:        id,
-				ProjectID: projectID,
-				Name:      name,
-				Color:     color,
-			})
-			count++
-		}
-	}
-	return count, nil
 }

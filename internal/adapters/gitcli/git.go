@@ -42,12 +42,15 @@ func (r *Runner) Run(ctx context.Context, dir string, args ...string) (string, s
 
 	err := cmd.Run()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			// Matar el grupo de procesos
+		if ctx.Err() != nil {
+			// Matar el grupo de procesos si el contexto expiró o fue cancelado
 			if cmd.Process != nil {
 				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			}
-			return stdout.String(), stderr.String(), fmt.Errorf("git command timed out after %v", r.defaultTimeout)
+			if ctx.Err() == context.DeadlineExceeded {
+				return stdout.String(), stderr.String(), fmt.Errorf("git command timed out after %v", r.defaultTimeout)
+			}
+			return stdout.String(), stderr.String(), fmt.Errorf("git command canceled: %w", ctx.Err())
 		}
 		return stdout.String(), stderr.String(), fmt.Errorf("git %s failed: %w (stderr: %s)", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
