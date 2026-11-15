@@ -42,22 +42,25 @@ En la ingeniería de software moderna:
 ## 🚀 Uso Rápido
 
 ```bash
-# Cockpit y Telemetría Personal
-alo agenda                 # Dashboard de estado alostático y fricciones
-alo report time --week     # Balance de capacidad y distribución de esfuerzo
-alo report flow            # Métricas de flujo, ciclo y standby
+# Cockpit Interactivo (TUI con Charm)
+alo                        # Abre la estación de cabina interactiva en tiempo real
 
-# Gestión de Tareas y Registro Soberano
-alo issue list             # Listar tareas activas desde caché local SQLite
-alo issue get PROJ-123     # Inspección de ticket
-alo log PROJ-123 --duration 45 --track "backend" --capacity deep_work
-alo sync                   # Sincronización delta incremental tolerante a fallos
+# Telemetría y Carga Alostática
+alo agenda                 # Dashboard de estado del día, focos activos y horas Klee
+alo load                   # Balance de trabajo profundo vs soporte invisible (Ley de Little)
 
-# Aislamiento de Espacio de Trabajo Multi-Repo (ex plane-worktree)
-alo ws add PROJ-123 feat-auth repo-api repo-web --type feat
-alo ws list                # Ver worktrees activos y estado de merge
-alo ws audit               # Auditar si los worktrees ya fueron integrados upstream
-alo ws prune --execute     # Poda segura con respaldo automático .tar.gz
+# Modo Headless Estricto para Agentes de IA
+alo agenda --json          # Payload estructurado sin secuencias ANSI para Claude/Gemini
+alo load --json            # Métricas en crudo para toma autónoma de decisiones
+
+# Registro Soberano de Esfuerzo (Local-First)
+alo log PROJ-123 45 "Refactorización del dominio hexagonal" --bucket deep_work
+alo log OPS-24 15 "Resolución de alerta en monitoreo" --bucket toil_support
+
+# Orquestación de Espacios de Trabajo Multi-Repo (Git Worktrees)
+alo ws create PROJ-123 repo-api repo-web --base main
+alo ws list                # Ver worktrees activos y estado de modificación
+alo ws prune proj-123      # Poda segura con respaldo automático .tar.gz
 ```
 
 ---
