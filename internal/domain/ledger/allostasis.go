@@ -8,10 +8,10 @@ import (
 type CapacityBucket string
 
 const (
-	BucketDeepWork     CapacityBucket = "deep_work"     // Trabajo de foco, desarrollo de features y refactoring
-	BucketToilSupport  CapacityBucket = "toil_support"  // Soporte ad-hoc, resolución rápida de incidentes, mantenimiento
-	BucketCoordination CapacityBucket = "coordination"  // Reuniones, sincronizaciones de equipo y alineación
-	BucketStandby      CapacityBucket = "standby"       // Tiempo de espera por bloqueos, revisiones o despliegues
+	BucketDeepWork     CapacityBucket = "deep_work"    // Trabajo de foco, desarrollo de features y refactoring
+	BucketToilSupport  CapacityBucket = "toil_support" // Soporte ad-hoc, resolución rápida de incidentes, mantenimiento
+	BucketCoordination CapacityBucket = "coordination" // Reuniones, sincronizaciones de equipo y alineación
+	BucketStandby      CapacityBucket = "standby"      // Tiempo de espera por bloqueos, revisiones o despliegues
 )
 
 // WorklogEntry representa un registro atómico de esfuerzo auditado en el ledger soberano.

@@ -66,33 +66,64 @@ func (e *GitExecutor) CreateWorktree(ctx context.Context, c *workspace.Container
 	}
 	c.Path = absPath
 
+	// Anti Flag Injection en BaseRef
+	if c.BaseRef != "" && strings.HasPrefix(strings.TrimSpace(c.BaseRef), "-") {
+		return fmt.Errorf("referencia base inválida (no puede comenzar con guion): %s", c.BaseRef)
+	}
+
+	// Pre-validación estricta de todos los bindings antes de mutar el sistema de archivos
+	for _, b := range c.Bindings {
+		cleanName := filepath.Base(b.RepoName)
+		if cleanName == "." || cleanName == "/" || cleanName == ".." || cleanName != b.RepoName {
+			return fmt.Errorf("intento de path traversal detectado en nombre de repositorio: %s", b.RepoName)
+		}
+		if strings.HasPrefix(strings.TrimSpace(b.Branch), "-") {
+			return fmt.Errorf("nombre de rama inválido (no puede comenzar con guion): %s", b.Branch)
+		}
+	}
+
 	// Crear el directorio contenedor (.worktrees/<TICKET>-<slug>)
 	if err := os.MkdirAll(c.Path, 0755); err != nil {
 		return fmt.Errorf("error al crear directorio contenedor '%s': %w", c.Path, err)
 	}
 
-	createdWorktrees := make([]string, 0, len(c.Bindings))
+	type createdWorktreeItem struct {
+		repoPath string
+		wtPath   string
+		branch   string
+	}
+	createdItems := make([]createdWorktreeItem, 0, len(c.Bindings))
 
-	// Rollback handler
+	// Rollback handler transaccional de alta precisión
 	rollback := func() {
-		for _, wt := range createdWorktrees {
-			_, _, _ = e.runner.Run(ctx, "", "worktree", "remove", "--force", wt)
+		for _, item := range createdItems {
+			_, _, _ = e.runner.Run(ctx, item.repoPath, "worktree", "remove", "--force", item.wtPath)
+			_, _, _ = e.runner.Run(ctx, item.repoPath, "branch", "-D", item.branch)
 		}
 		_ = os.RemoveAll(c.Path)
 	}
 
 	for i := range c.Bindings {
 		b := &c.Bindings[i]
-		wtPath := filepath.Join(c.Path, b.RepoName)
-		b.Worktree = wtPath
+		cleanName := filepath.Base(b.RepoName)
+		wtPath := filepath.Join(c.Path, cleanName)
 
-		// git worktree add -b <branch> <path> <baseRef>
-		args := []string{"worktree", "add", "-b", b.Branch, wtPath}
-		if c.BaseRef != "" {
-			args = append(args, c.BaseRef)
+		// Verificación de contención de path
+		rel, err := filepath.Rel(c.Path, wtPath)
+		if err != nil || strings.HasPrefix(rel, "..") || rel == "." {
+			rollback()
+			return fmt.Errorf("violación de confinamiento de contenedor en '%s'", wtPath)
 		}
 
-		_, _, err := e.runner.Run(ctx, b.RepoPath, args...)
+		b.Worktree = wtPath
+
+		// git worktree add -b <branch> <path> -- <baseRef>
+		args := []string{"worktree", "add", "-b", b.Branch, wtPath}
+		if c.BaseRef != "" {
+			args = append(args, "--", c.BaseRef)
+		}
+
+		_, _, err = e.runner.Run(ctx, b.RepoPath, args...)
 		if err != nil {
 			// Intentar sin -b si la rama ya existía previamente
 			argsRetry := []string{"worktree", "add", wtPath, b.Branch}
@@ -103,7 +134,11 @@ func (e *GitExecutor) CreateWorktree(ctx context.Context, c *workspace.Container
 			}
 		}
 
-		createdWorktrees = append(createdWorktrees, wtPath)
+		createdItems = append(createdItems, createdWorktreeItem{
+			repoPath: b.RepoPath,
+			wtPath:   wtPath,
+			branch:   b.Branch,
+		})
 		b.IsClean = true
 		b.Status = workspace.StatusUnmerged
 	}

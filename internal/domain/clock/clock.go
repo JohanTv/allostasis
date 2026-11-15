@@ -1,6 +1,9 @@
 package clock
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 // Clock abstrae el acceso al tiempo del sistema para garantizar determinismo absoluto en pruebas y auditorías.
 type Clock interface {
@@ -24,7 +27,9 @@ func (r *RealClock) Since(t time.Time) time.Duration {
 }
 
 // FrozenClock permite fijar y avanzar el tiempo de forma determinista para pruebas reproducibles.
+// Incorpora sync.RWMutex para garantizar seguridad absoluta ante accesos concurrentes en pruebas de estrés.
 type FrozenClock struct {
+	mu          sync.RWMutex
 	currentTime time.Time
 }
 
@@ -33,17 +38,25 @@ func NewFrozenClock(initial time.Time) *FrozenClock {
 }
 
 func (f *FrozenClock) Now() time.Time {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	return f.currentTime
 }
 
 func (f *FrozenClock) Since(t time.Time) time.Duration {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
 	return f.currentTime.Sub(t)
 }
 
 func (f *FrozenClock) Set(t time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.currentTime = t
 }
 
 func (f *FrozenClock) Advance(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.currentTime = f.currentTime.Add(d)
 }

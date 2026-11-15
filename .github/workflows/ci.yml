@@ -1,0 +1,46 @@
+name: CI & Quality Assurance
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Unit & Integration Tests (Hexagonal Architecture)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Verify Code Formatting
+        run: |
+          UNFORMATTED=$(gofmt -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "Archivos no formateados según gofmt:"
+            echo "$UNFORMATTED"
+            exit 1
+          fi
+
+      - name: Run Table-Driven & Integration Tests
+        run: go test -v -race ./...
+
+      - name: Compile Sovereign Binaries (CGO_ENABLED=0)
+        run: |
+          CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/alo ./cmd/alo
+          CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/alo-ws ./cmd/alo-ws
+
+      - name: Smoke Test Binaries
+        run: |
+          ./bin/alo version
+          ./bin/alo version --json
+          ./bin/alo-ws version
+          ./bin/alo-ws version --json

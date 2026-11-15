@@ -202,11 +202,14 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 	}
 
 	// 4. Comando log (Registro de Esfuerzo)
-	var bucketFlag string
+	var (
+		bucketFlag      string
+		interactiveFlag bool
+	)
 	logCmd := &cobra.Command{
-		Use:   "log <TICKET-ID> <DURACION_MINUTOS> [NOTAS...]",
+		Use:   "log [TICKET-ID] [DURACION_MINUTOS] [NOTAS...]",
 		Short: "Registra una sesión de esfuerzo en el ledger alostático",
-		Args:  cobra.MinimumNArgs(2),
+		Args:  cobra.ArbitraryArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			svc, store, _, err := initCockpitService()
 			if err != nil {
@@ -214,6 +217,27 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 				os.Exit(1)
 			}
 			defer store.Close()
+
+			ctx := context.Background()
+
+			// Modo Formulario Interactivo con Huh si se solicita o faltan argumentos en TTY
+			if interactiveFlag || (len(args) < 2 && term.IsTerminal(int(os.Stdout.Fd()))) {
+				defaultTicket := ""
+				if len(args) > 0 {
+					defaultTicket = strings.ToUpper(args[0])
+				}
+				if err := tui.RunLogForm(ctx, svc, defaultTicket); err != nil {
+					fmt.Fprintf(os.Stderr, "Registro interactivo cancelado: %v\n", err)
+					os.Exit(1)
+				}
+				fmt.Println("✓ Sesión registrada exitosamente en el ledger alostático.")
+				return
+			}
+
+			if len(args) < 2 {
+				fmt.Fprintf(os.Stderr, "Error: uso requerido: alo log <TICKET-ID> <MINUTOS> [NOTAS...] o use 'alo log -i'\n")
+				os.Exit(1)
+			}
 
 			ticketID := strings.ToUpper(args[0])
 			durationMins, err := strconv.Atoi(args[1])
@@ -232,7 +256,6 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 				bucket = ledger.BucketDeepWork
 			}
 
-			ctx := context.Background()
 			if err := svc.LogTime(ctx, ticketID, durationMins, bucket, notes); err != nil {
 				fmt.Fprintf(os.Stderr, "Error registrando sesión: %v\n", err)
 				os.Exit(1)
@@ -240,11 +263,11 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 
 			if jsonFlag {
 				payload := map[string]interface{}{
-					"status":          "recorded",
-					"ticket_id":       ticketID,
+					"status":           "recorded",
+					"ticket_id":        ticketID,
 					"duration_minutes": durationMins,
-					"bucket":          string(bucket),
-					"notes":           notes,
+					"bucket":           string(bucket),
+					"notes":            notes,
 				}
 				_ = json.NewEncoder(os.Stdout).Encode(payload)
 				return
@@ -253,7 +276,8 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 			fmt.Printf("✓ Registrados %d min en %s [%s]: %s\n", durationMins, ticketID, bucket, notes)
 		},
 	}
-	logCmd.Flags().StringVar(&bucketFlag, "bucket", "deep_work", "Bucket de capacidad (deep_work, toil, overhead, meeting, review, research_rd)")
+	logCmd.Flags().StringVar(&bucketFlag, "bucket", "deep_work", "Bucket de capacidad (deep_work, toil_support, coordination, standby)")
+	logCmd.Flags().BoolVarP(&interactiveFlag, "interactive", "i", false, "Lanzar formulario interactivo con Charm Huh")
 
 	// 5. Grupo workspace (alo ws)
 	wsCmd := &cobra.Command{

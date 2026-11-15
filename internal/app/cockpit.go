@@ -34,21 +34,21 @@ func DefaultDatabasePath() string {
 
 // CockpitSnapshot captura el estado holístico del desarrollador para CLI y TUI.
 type CockpitSnapshot struct {
-	Timestamp          time.Time                 `json:"timestamp"`
-	ActiveIssues       []issue.WorkItem          `json:"active_issues"`
-	ActiveWorktrees    []workspace.Container     `json:"active_worktrees"`
-	TodayMinutes       int                       `json:"today_minutes"`
-	KleeMeasureMinutes int                       `json:"klee_measure_minutes"`
-	AllostaticLoad     ledger.AllostaticLoad     `json:"allostatic_load"`
-	CycleTimeDays      float64                   `json:"cycle_time_days"`
-	StatusSummary      string                    `json:"status_summary"`
+	Timestamp          time.Time             `json:"timestamp"`
+	ActiveIssues       []issue.WorkItem      `json:"active_issues"`
+	ActiveWorktrees    []workspace.Container `json:"active_worktrees"`
+	TodayMinutes       int                   `json:"today_minutes"`
+	KleeMeasureMinutes int                   `json:"klee_measure_minutes"`
+	AllostaticLoad     ledger.AllostaticLoad `json:"allostatic_load"`
+	CycleTimeDays      float64               `json:"cycle_time_days"`
+	StatusSummary      string                `json:"status_summary"`
 }
 
 // CockpitService orquesta la lectura y mutaciones de alto nivel.
 type CockpitService struct {
-	store    *sqlite.Store
-	gitExec  *gitcli.GitExecutor
-	clock    clock.Clock
+	store   *sqlite.Store
+	gitExec *gitcli.GitExecutor
+	clock   clock.Clock
 }
 
 // NewCockpitService crea el orquestador principal.

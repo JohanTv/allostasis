@@ -21,7 +21,7 @@ type Store struct {
 func NewStore(dsn string) (*Store, error) {
 	var uri string
 	if dsn == ":memory:" {
-		uri = "file::memory:?mode=memory&cache=shared"
+		uri = "file:alo_shared_mem?mode=memory&cache=shared&_pragma=busy_timeout(10000)"
 	} else if len(dsn) > 5 && dsn[:5] == "file:" {
 		uri = dsn
 	} else {
@@ -34,9 +34,15 @@ func NewStore(dsn string) (*Store, error) {
 	}
 
 	// Configuración de pool
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(time.Hour)
+	if dsn == ":memory:" {
+		// Bases de datos en memoria requieren conexión fija única para preservar tablas del schema
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
+	} else {
+		db.SetMaxOpenConns(10)
+		db.SetMaxIdleConns(5)
+		db.SetConnMaxLifetime(time.Hour)
+	}
 
 	s := &Store{db: db}
 	if err := s.migrateBaseline(); err != nil {
