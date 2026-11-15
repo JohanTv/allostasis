@@ -14,7 +14,7 @@ Open technical considerations, pending defects, and deferred improvements for Al
 
 - **RFC-0014 · Pluggable Multi-Tracker Drivers (Linear / GitHub Issues):**
   - **Status:** Architecture ready; adapter development open.
-  - **Context:** The canonical port [`RemoteTrackerClient`](file:///home/johantv/Code/allostasis/internal/app/ports.go#L44-L49) in `internal/app/ports.go` abstracts all remote tracking operations. Plane CE is 100% functional. Implementations for Linear GraphQL and GitHub Issues REST can be plugged in without modifying application services or domain logic.
+  - **Context:** The canonical port [`RemoteTrackerClient`](../internal/app/ports.go) in `internal/app/ports.go` abstracts all remote tracking operations. Plane CE is 100% functional. Implementations for Linear GraphQL and GitHub Issues REST can be plugged in without modifying application services or domain logic.
 
 - **RFC-0029 · Interactive TUI Worktree Navigator (`alo ws browse`):**
   - **Status:** Proposed for v0.2.0.

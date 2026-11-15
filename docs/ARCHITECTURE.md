@@ -100,7 +100,7 @@ flowchart TD
   - `workspace`: Entidades `Container`, `WorktreeBinding`, categorías de salud de worktrees y resultados de poda.
 
 ### 2.2 Capa de Aplicación y Puertos Canónicos (`internal/app/`)
-- **Puertos ([`ports.go`](file:///home/johantv/Code/allostasis/internal/app/ports.go)):**
+- **Puertos ([`ports.go`](../internal/app/ports.go)):**
   - `IssueStore`: Contrato para almacenamiento y consulta de tareas, proyectos, estados y cola outbox.
   - `WorklogStore`: Contrato para el ledger soberano de tiempo e intervalos.
   - `WorkspaceRunner`: Contrato para interacción con el subsistema Git del host.
@@ -125,8 +125,8 @@ flowchart TD
 
 ### 2.4 Capa de Presentación e Interfaz (`cmd/alo/`, `internal/presentation/`)
 - **Modularidad del CLI Cobra:**
-  - [`cmd/alo/main.go`](file:///home/johantv/Code/allostasis/cmd/alo/main.go): Entrypoint ligero (45 líneas) con `signal.NotifyContext` (captura de `SIGINT`/`SIGTERM`), detección automática de `--json` en argumentos y blindaje de panics.
-  - [`cmd/alo/root.go`](file:///home/johantv/Code/allostasis/cmd/alo/root.go): Composición raíz, configuración de versión nativa, banderas globales (`--json`, `--db`) e inyección de dependencias.
+  - [`cmd/alo/main.go`](../cmd/alo/main.go): Entrypoint ligero (45 líneas) con `signal.NotifyContext` (captura de `SIGINT`/`SIGTERM`), detección automática de `--json` en argumentos y blindaje de panics.
+  - [`cmd/alo/root.go`](../cmd/alo/root.go): Composición raíz, configuración de versión nativa, banderas globales (`--json`, `--db`) e inyección de dependencias.
   - Comandos temáticos segregados: `cmd_workspace.go`, `cmd_cockpit.go`, `cmd_sync.go`, `cmd_ticket.go`.
 - **TUI Reactiva Asíncrona (Charm Bubble Tea):**
   - El refresco en caliente (`'r'`) despacha un `tea.Cmd` asíncrono, garantizando que el bucle de eventos y renderizado de la terminal nunca se congele ante operaciones de I/O.
@@ -137,11 +137,11 @@ flowchart TD
 
 | Principio | Manifestación en la Arquitectura | Archivo de Referencia |
 | :--- | :--- | :--- |
-| **S (Single Responsibility)** | Cada capa, servicio y comando tiene una única razón de cambio. Los modelos no conocen la persistencia, los adaptadores no conocen el CLI, y los comandos solo parsean y presentan. | [`internal/app/workspace.go`](file:///home/johantv/Code/allostasis/internal/app/workspace.go), [`cmd/alo/cmd_workspace.go`](file:///home/johantv/Code/allostasis/cmd/alo/cmd_workspace.go) |
-| **O (Open/Closed)** | Es posible agregar nuevos proveedores de tracking remoto (Linear, GitHub Issues, Jira) implementando la interfaz `RemoteTrackerClient` sin tocar el dominio ni `TrackerService`. | [`internal/app/ports.go`](file:///home/johantv/Code/allostasis/internal/app/ports.go) |
-| **L (Liskov Substitution)** | `sqlite.Store` puede ser sustituido por `mockStore` en pruebas unitarias, o `GitExecutor` por `mockWorkspaceRunner`, manteniendo idéntico comportamiento verificable. | [`internal/app/tracker_test.go`](file:///home/johantv/Code/allostasis/internal/app/tracker_test.go), [`internal/app/workspace_test.go`](file:///home/johantv/Code/allostasis/internal/app/workspace_test.go) |
-| **I (Interface Segregation)** | Se evitan interfaces monolíticas. `IssueStore`, `WorklogStore`, `WorkspaceRunner` y `RemoteTrackerClient` declaran únicamente los métodos requeridos por sus consumidores. | [`internal/app/ports.go`](file:///home/johantv/Code/allostasis/internal/app/ports.go) |
-| **D (Dependency Inversion)** | `CockpitService`, `TrackerService` y `WorkspaceService` dependen exclusivamente de interfaces declaradas en la capa de aplicación, invirtiendo la flecha hacia afuera. | [`internal/app/cockpit.go`](file:///home/johantv/Code/allostasis/internal/app/cockpit.go), [`internal/app/tracker.go`](file:///home/johantv/Code/allostasis/internal/app/tracker.go) |
+| **S (Single Responsibility)** | Cada capa, servicio y comando tiene una única razón de cambio. Los modelos no conocen la persistencia, los adaptadores no conocen el CLI, y los comandos solo parsean y presentan. | [`internal/app/workspace.go`](../internal/app/workspace.go), [`cmd/alo/cmd_workspace.go`](../cmd/alo/cmd_workspace.go) |
+| **O (Open/Closed)** | Es posible agregar nuevos proveedores de tracking remoto (Linear, GitHub Issues, Jira) implementando la interfaz `RemoteTrackerClient` sin tocar el dominio ni `TrackerService`. | [`internal/app/ports.go`](../internal/app/ports.go) |
+| **L (Liskov Substitution)** | `sqlite.Store` puede ser sustituido por `mockStore` en pruebas unitarias, o `GitExecutor` por `mockWorkspaceRunner`, manteniendo idéntico comportamiento verificable. | [`internal/app/tracker_test.go`](../internal/app/tracker_test.go), [`internal/app/workspace_test.go`](../internal/app/workspace_test.go) |
+| **I (Interface Segregation)** | Se evitan interfaces monolíticas. `IssueStore`, `WorklogStore`, `WorkspaceRunner` y `RemoteTrackerClient` declaran únicamente los métodos requeridos por sus consumidores. | [`internal/app/ports.go`](../internal/app/ports.go) |
+| **D (Dependency Inversion)** | `CockpitService`, `TrackerService` y `WorkspaceService` dependen exclusivamente de interfaces declaradas en la capa de aplicación, invirtiendo la flecha hacia afuera. | [`internal/app/cockpit.go`](../internal/app/cockpit.go), [`internal/app/tracker.go`](../internal/app/tracker.go) |
 
 ---
 

@@ -1,7 +1,7 @@
 ---
 id: "0002"
 title: Gestión de worktrees multi-repo por ticket
-status: implementado
+status: implemented
 created: 2026-10-31
 summary: Script independiente que crea, por ticket, un worktree en cada repo implicado con rama y base verificadas.
 ---

@@ -8,7 +8,7 @@ summary: Proposal to unify external blocker visibility with agenda dashboards (R
 
 # 0006 · Data Source for External Standby and Blockers
 
-Related: [BACKLOG.md](../BACKLOG.md), [RFC 0005](./0005-personal-agenda-and-backlog.md), [CLI_DESIGN_GUARD](../../references/CLI_DESIGN_GUARD.md).
+Related: [BACKLOG.md](../BACKLOG.md), [RFC 0005](./0005-personal-agenda-and-backlog.md), [CLI_DESIGN_GUARD](../references/CLI_DESIGN_GUARD.md).
 
 ## Context
 
@@ -27,7 +27,7 @@ The motivation behind capturing external standby addresses a critical operationa
 
 ## Architectural Evaluation (CLI Design Guard)
 
-Evaluating `--stopper` against the [CLI Design Guard](../../references/CLI_DESIGN_GUARD.md) confirms it must be rejected:
+Evaluating `--stopper` against the [CLI Design Guard](../references/CLI_DESIGN_GUARD.md) confirms it must be rejected:
 1. **Domain Isolation:** `comment add` governs *Session Effort Telemetry* (minutes, track, capacity). Blockers govern *Ticket State Lifecycle*.
 2. **Telemetry Without Duration:** A text reason does not measure time. Displaying `0h 00m` or requiring manual minutes (`--stopper-duration`) injects synthetic guesses.
 3. **Canonical Primitive:** The CLI already has a native mechanism for blockers:
