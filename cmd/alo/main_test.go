@@ -73,27 +73,6 @@ func TestCLI_LoadJSONContract(t *testing.T) {
 	}
 }
 
-func TestStandaloneWS_VersionJSONContract(t *testing.T) {
-	cmd := exec.Command("go", "run", "./cmd/alo-ws", "version", "--json")
-	cmd.Dir = "../.."
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("error ejecutando alo-ws version --json: %v (output: %s)", err, string(out))
-	}
-
-	var envelope struct {
-		OK   bool                   `json:"ok"`
-		Data map[string]interface{} `json:"data"`
-	}
-	if err := json.Unmarshal(out, &envelope); err != nil {
-		t.Fatalf("la salida no es un JSON válido: %v (raw: %s)", err, string(out))
-	}
-
-	if !envelope.OK || envelope.Data["app"] != "alo-ws" {
-		t.Errorf("campo 'app' esperado 'alo-ws' en envelope, obtenido '%v'", envelope.Data["app"])
-	}
-}
-
 func TestCLI_SyncJSONEnvelope(t *testing.T) {
 	cmd := exec.Command("go", "run", "./cmd/alo", "sync", "--json")
 	cmd.Dir = "../.."

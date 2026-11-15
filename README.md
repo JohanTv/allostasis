@@ -72,8 +72,7 @@ El proyecto sigue rigurosamente los principios **SOLID**, **Domain-Driven Design
 ```text
 allostasis/
 ├── cmd/
-│   ├── alo/                    # Entrypoint principal (CLI unificado)
-│   └── alo-ws/                 # Entrypoint autónomo de worktrees (opcional)
+│   └── alo/                    # Entrypoint principal (CLI unificado)
 ├── internal/
 │   ├── bootstrap/              # Composition Root (inyección manual, arranque <5ms)
 │   ├── domain/                 # 🧠 Núcleo puro (cero dependencias externas)
