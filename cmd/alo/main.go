@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,9 +92,7 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 
 			// Modo Headless / JSON
 			if jsonFlag {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				_ = enc.Encode(snap)
+				errors.EmitSuccess(snap, true)
 				return
 			}
 
@@ -132,7 +129,7 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 					"version":    Version,
 					"build_date": BuildDate,
 				}
-				_ = json.NewEncoder(os.Stdout).Encode(payload)
+				errors.EmitSuccess(payload, true)
 				return
 			}
 			fmt.Printf("Allostasis (alo) v%s (compilado: %s)\n", Version, BuildDate)
@@ -159,9 +156,7 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 			}
 
 			if jsonFlag {
-				enc := json.NewEncoder(os.Stdout)
-				enc.SetIndent("", "  ")
-				_ = enc.Encode(snap)
+				errors.EmitSuccess(snap, true)
 				return
 			}
 
@@ -211,7 +206,7 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 					"deep_work_ratio":      snap.AllostaticLoad.DeepWorkRatio(),
 					"status_summary":       snap.StatusSummary,
 				}
-				_ = json.NewEncoder(os.Stdout).Encode(payload)
+				errors.EmitSuccess(payload, true)
 				return
 			}
 
@@ -292,7 +287,7 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 					"bucket":           string(bucket),
 					"notes":            notes,
 				}
-				_ = json.NewEncoder(os.Stdout).Encode(payload)
+				errors.EmitSuccess(payload, true)
 				return
 			}
 
@@ -329,7 +324,10 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 			}
 
 			if jsonFlag {
-				_ = json.NewEncoder(os.Stdout).Encode(containers)
+				if containers == nil {
+					containers = make([]workspace.Container, 0)
+				}
+				errors.EmitSuccess(containers, true)
 				return
 			}
 
@@ -406,7 +404,7 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 			}
 
 			if jsonFlag {
-				_ = json.NewEncoder(os.Stdout).Encode(container)
+				errors.EmitSuccess(container, true)
 				return
 			}
 
@@ -478,7 +476,7 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 					"ticket_id": targetContainer.TicketID,
 					"path":      containerPath,
 				}
-				_ = json.NewEncoder(os.Stdout).Encode(payload)
+				errors.EmitSuccess(payload, true)
 				return
 			}
 
@@ -825,7 +823,9 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 	wsCmd.AddCommand(wsListCmd, wsCreateCmd, wsPruneCmd)
 	rootCmd.AddCommand(versionCmd, agendaCmd, loadCmd, logCmd, syncCmd, wsCmd, ticketCmd)
 
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+	errors.SafeExecute(jsonFlag, func() {
+		if err := rootCmd.Execute(); err != nil {
+			os.Exit(1)
+		}
+	})
 }

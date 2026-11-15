@@ -1,6 +1,7 @@
 # Binaries
 bin/
-alo
+/alo
+/alo-ws
 *.exe
 *.exe~
 *.dll

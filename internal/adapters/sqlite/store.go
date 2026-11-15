@@ -237,7 +237,7 @@ func (s *Store) ListIssues(ctx context.Context, state issue.State) ([]issue.Work
 	}
 	defer rows.Close()
 
-	var list []issue.WorkItem
+	list := make([]issue.WorkItem, 0)
 	for rows.Next() {
 		var item issue.WorkItem
 		var stateStr string
@@ -288,7 +288,7 @@ func (s *Store) ListIssuesFiltered(ctx context.Context, filter issue.IssueFilter
 	}
 	defer rows.Close()
 
-	var list []issue.WorkItem
+	list := make([]issue.WorkItem, 0)
 	for rows.Next() {
 		var item issue.WorkItem
 		var stateStr string
@@ -333,7 +333,7 @@ func (s *Store) SearchIssues(ctx context.Context, query string, project string, 
 	}
 	defer rows.Close()
 
-	var list []issue.WorkItem
+	list := make([]issue.WorkItem, 0)
 	for rows.Next() {
 		var item issue.WorkItem
 		var stateStr, snapshotJSON string

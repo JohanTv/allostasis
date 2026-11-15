@@ -35,6 +35,9 @@ func (s *TrackerService) Search(ctx context.Context, query string, project strin
 	if err != nil {
 		return nil, fmt.Errorf("error al buscar tareas: %w", err)
 	}
+	if items == nil {
+		items = make([]issue.WorkItem, 0)
+	}
 	return items, nil
 }
 
@@ -51,7 +54,14 @@ func (s *TrackerService) List(ctx context.Context, filter issue.IssueFilter) ([]
 	if s.store == nil {
 		return nil, fmt.Errorf("almacenamiento no inicializado")
 	}
-	return s.store.ListIssuesFiltered(ctx, filter)
+	items, err := s.store.ListIssuesFiltered(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	if items == nil {
+		items = make([]issue.WorkItem, 0)
+	}
+	return items, nil
 }
 
 // Create crea una tarea de forma atómica: en Plane CE si hay conexión, o en cola outbox local si está offline.

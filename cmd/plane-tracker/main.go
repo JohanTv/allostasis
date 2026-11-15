@@ -514,7 +514,9 @@ func main() {
 
 	rootCmd.AddCommand(listCmd, searchCmd, getCmd, createCmd, updateCmd, syncCmd, whoamiCmd, commentCmd, outboxCmd, agendaCmd)
 
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+	errors.SafeExecute(jsonFlag, func() {
+		if err := rootCmd.Execute(); err != nil {
+			os.Exit(1)
+		}
+	})
 }
