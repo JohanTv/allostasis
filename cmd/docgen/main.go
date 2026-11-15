@@ -10,12 +10,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var (
-	filePattern  = regexp.MustCompile(`^(\d{4})-[a-z0-9-]+\.md$`)
+	filePattern  = regexp.MustCompile(`^(\d{4})-[a-z0-9]+(-[a-z0-9]+)*\.md$`)
 	datePattern  = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
-	linkPattern  = regexp.MustCompile(`\[([^\]]*)\]\(([^)#\s]+)(?:#[^)]*)?\)`)
+	linkPattern  = regexp.MustCompile(`\[([^\]]*)\]\(([^)]*)\)`)
 	requiredKeys = []string{"id", "title", "status", "created", "summary"}
 
 	validStatuses = map[string]map[string]bool{
@@ -169,6 +170,8 @@ func CollectDocs(docsDir string) ([]DocItem, []string) {
 			// Validar fecha
 			if !datePattern.MatchString(meta["created"]) {
 				errs = append(errs, fmt.Sprintf("%s: 'created' (%s) no tiene formato YYYY-MM-DD", relPath, meta["created"]))
+			} else if _, err := time.Parse("2006-01-02", meta["created"]); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: 'created' (%s) no es una fecha válida de calendario: %v", relPath, meta["created"], err))
 			}
 
 			// Validar estado
@@ -204,8 +207,31 @@ func CollectDocs(docsDir string) ([]DocItem, []string) {
 	return items, errs
 }
 
+func FindDocsRoot(docsDir string) string {
+	absDocs, err := filepath.Abs(docsDir)
+	if err != nil {
+		absDocs = docsDir
+	}
+	curr := absDocs
+	for {
+		if _, err := os.Stat(filepath.Join(curr, "go.mod")); err == nil {
+			return curr
+		}
+		parent := filepath.Dir(curr)
+		if parent == curr {
+			break
+		}
+		curr = parent
+	}
+	if filepath.Base(absDocs) == "docs" {
+		return filepath.Dir(absDocs)
+	}
+	return absDocs
+}
+
 func CheckRelativeLinks(docsDir string) []string {
 	var errs []string
+	repoRoot := FindDocsRoot(docsDir)
 
 	err := filepath.Walk(docsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -227,23 +253,87 @@ func CheckRelativeLinks(docsDir string) []string {
 			if len(m) < 3 {
 				continue
 			}
-			target := m[2]
+			rawTarget := strings.TrimSpace(m[2])
 
-			// Ignorar esquemas web y anclas puras
-			if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") ||
-				strings.HasPrefix(target, "mailto:") || strings.HasPrefix(target, "#") {
+			// 1. Enlace vacío
+			if rawTarget == "" {
+				errs = append(errs, fmt.Sprintf("%s: enlace vacío '[]()'", relFile))
+				continue
+			}
+
+			// Soporte para delimitadores <url>
+			if strings.HasPrefix(rawTarget, "<") && strings.HasSuffix(rawTarget, ">") {
+				rawTarget = strings.TrimPrefix(strings.TrimSuffix(rawTarget, ">"), "<")
+			}
+
+			// Soporte para títulos opcionales en Markdown: [text](url "title")
+			if idx := strings.IndexAny(rawTarget, " \t"); idx != -1 {
+				rest := strings.TrimSpace(rawTarget[idx:])
+				if (strings.HasPrefix(rest, `"`) && strings.HasSuffix(rest, `"`)) ||
+					(strings.HasPrefix(rest, `'`) && strings.HasSuffix(rest, `'`)) {
+					rawTarget = strings.TrimSpace(rawTarget[:idx])
+				}
+			}
+
+			// Enlace con espacios en blanco no permitidos
+			if strings.ContainsAny(rawTarget, " \t\r\n") {
+				errs = append(errs, fmt.Sprintf("%s: enlace con espacios en blanco no permitidos: '%s'", relFile, rawTarget))
+				continue
+			}
+
+			// Ignorar esquemas web
+			if strings.HasPrefix(rawTarget, "http://") || strings.HasPrefix(rawTarget, "https://") ||
+				strings.HasPrefix(rawTarget, "mailto:") {
 				continue
 			}
 
 			// Prohibir file:/// ya que viola la portabilidad (ADR-0007)
-			if strings.HasPrefix(target, "file://") {
-				errs = append(errs, fmt.Sprintf("%s: enlace absoluto 'file://' no portable (usa rutas relativas): %s", relFile, target))
+			if strings.HasPrefix(rawTarget, "file://") {
+				errs = append(errs, fmt.Sprintf("%s: enlace absoluto 'file://' no portable (usa rutas relativas): %s", relFile, rawTarget))
 				continue
 			}
 
-			resolved := filepath.Clean(filepath.Join(filepath.Dir(path), target))
+			// Prohibir enlaces absolutos con '/'
+			if strings.HasPrefix(rawTarget, "/") {
+				errs = append(errs, fmt.Sprintf("%s: enlace absoluto con '/' no permitido (usa rutas relativas): %s", relFile, rawTarget))
+				continue
+			}
+
+			// Validación de anclas y fragmentos
+			targetFile := rawTarget
+			if strings.Contains(rawTarget, "#") {
+				parts := strings.Split(rawTarget, "#")
+				if len(parts) > 2 {
+					errs = append(errs, fmt.Sprintf("%s: ancla fragmentada o malformada (múltiples '#'): '%s'", relFile, rawTarget))
+					continue
+				}
+				targetFile = parts[0]
+				anchor := parts[1]
+				if anchor == "" {
+					errs = append(errs, fmt.Sprintf("%s: ancla vacía en enlace: '%s'", relFile, rawTarget))
+					continue
+				}
+				if strings.ContainsAny(anchor, " \t\r\n<>\"'\\^`{}|") {
+					errs = append(errs, fmt.Sprintf("%s: ancla con caracteres inválidos: '%s'", relFile, rawTarget))
+					continue
+				}
+				if targetFile == "" {
+					// Ancla intra-documento válida (ej. [Context](#context))
+					continue
+				}
+			}
+
+			resolved := filepath.Clean(filepath.Join(filepath.Dir(path), targetFile))
+
+			// Detección de Path Traversal fuera del repositorio
+			relToRoot, err := filepath.Rel(repoRoot, resolved)
+			if err != nil || strings.HasPrefix(relToRoot, "..") {
+				errs = append(errs, fmt.Sprintf("%s: enlace hacia el exterior del repositorio no permitido (path traversal): %s", relFile, targetFile))
+				continue
+			}
+
 			if _, err := os.Stat(resolved); err != nil {
-				errs = append(errs, fmt.Sprintf("%s: enlace roto a '%s' (no existe: %s)", relFile, target, resolved))
+				errs = append(errs, fmt.Sprintf("%s: enlace roto a '%s' (no existe: %s)", relFile, targetFile, resolved))
 			}
 		}
 
@@ -272,10 +362,12 @@ func RenderIndex(items []DocItem) string {
 	buf.WriteString("| :--- | :--- | :---: | :--- |\n")
 	for _, item := range items {
 		if item.Kind == "decisions" {
+			title := strings.ReplaceAll(item.Title, "|", "\\|")
+			title = strings.ReplaceAll(title, "\n", " ")
 			summary := strings.ReplaceAll(item.Summary, "|", "\\|")
 			summary = strings.ReplaceAll(summary, "\n", " ")
 			buf.WriteString(fmt.Sprintf("| **%s** | [%s](%s) | %s | %s |\n",
-				item.ID, item.Title, item.RelPath, item.Status, summary))
+				item.ID, title, item.RelPath, item.Status, summary))
 		}
 	}
 
@@ -287,10 +379,12 @@ func RenderIndex(items []DocItem) string {
 	buf.WriteString("| :--- | :--- | :---: | :--- |\n")
 	for _, item := range items {
 		if item.Kind == "rfcs" {
+			title := strings.ReplaceAll(item.Title, "|", "\\|")
+			title = strings.ReplaceAll(title, "\n", " ")
 			summary := strings.ReplaceAll(item.Summary, "|", "\\|")
 			summary = strings.ReplaceAll(summary, "\n", " ")
 			buf.WriteString(fmt.Sprintf("| **%s** | [%s](%s) | %s | %s |\n",
-				item.ID, item.Title, item.RelPath, item.Status, summary))
+				item.ID, title, item.RelPath, item.Status, summary))
 		}
 	}
 
@@ -320,13 +414,34 @@ func NextAvailableID(items []DocItem) int {
 }
 
 func CreateDocScaffold(docsDir, kind, slug, title string) (string, error) {
-	items, _ := CollectDocs(docsDir)
-	nextID := NextAvailableID(items)
-	idStr := fmt.Sprintf("%04d", nextID)
+	if kind != "decisions" && kind != "rfcs" {
+		return "", fmt.Errorf("tipo de documento inválido '%s': debe ser 'decisions' o 'rfcs'", kind)
+	}
+
+	trimmedTitle := strings.TrimSpace(title)
+	if trimmedTitle == "" {
+		return "", fmt.Errorf("el título no puede estar vacío")
+	}
 
 	cleanSlug := strings.ToLower(strings.TrimSpace(slug))
 	cleanSlug = strings.ReplaceAll(cleanSlug, " ", "-")
+	if cleanSlug == "" {
+		return "", fmt.Errorf("el slug no puede estar vacío")
+	}
+
+	items, docErrs := CollectDocs(docsDir)
+	if len(docErrs) > 0 {
+		return "", fmt.Errorf("no se puede crear scaffold porque existen documentos con errores: %s", strings.Join(docErrs, "; "))
+	}
+
+	nextID := NextAvailableID(items)
+	idStr := fmt.Sprintf("%04d", nextID)
+
 	filename := fmt.Sprintf("%s-%s.md", idStr, cleanSlug)
+	if !filePattern.MatchString(filename) {
+		return "", fmt.Errorf("el slug '%s' genera un nombre de archivo inválido '%s' (debe cumplir %s)", slug, filename, filePattern.String())
+	}
+
 	targetDir := filepath.Join(docsDir, kind)
 	filePath := filepath.Join(targetDir, filename)
 
@@ -363,7 +478,7 @@ Detalla los cambios arquitecturales, interfaces y contratos.
 
 - Consecuencias positivas o simplificaciones operativas.
 - Riesgos mitigados o compensaciones técnicas.
-`, idStr, title, map[string]string{"decisions": "accepted", "rfcs": "proposed"}[kind], today, idStr, title)
+`, idStr, trimmedTitle, map[string]string{"decisions": "accepted", "rfcs": "proposed"}[kind], today, idStr, trimmedTitle)
 
 	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
 		return "", err
