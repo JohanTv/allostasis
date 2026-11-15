@@ -97,14 +97,14 @@ allostasis/
 │   └── presentation/           # 🖥️ Estrategias de Presentación e Interfaz
 │       ├── errors/             # Envelope JSON estructurado, categorías y códigos POSIX
 │       └── tui/                # Cockpit reactivo no bloqueante (Charm Bubble Tea)
-├── docs/                       # 📚 Especificaciones, auditorías y gobernanza
-│   ├── ARQUITECTURA.md         # Especificación técnica exhaustiva y principios SOLID
-│   ├── RFCS_Y_DECISIONES.md    # Matriz viva de ADRs y estado de RFCs
-│   └── AUDITORIA_ARQUITECTURA_Y_CALIDAD.md
+├── docs/                       # 📚 Especificaciones, arquitectura y gobernanza
+│   ├── ARCHITECTURE.md         # Especificación técnica canónica y principios SOLID
+│   ├── INDEX.md                # Índice maestro de Decisiones (ADRs) y RFCs
+│   └── BACKLOG.md              # Backlog de ingeniería y mejoras diferidas
 └── Makefile                    # Compilación, tests con -race e instalación local
 ```
 
-Para una inmersión detallada en los patrones de diseño y decisiones estructurales, consulte [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md) y [`docs/RFCS_Y_DECISIONES.md`](docs/RFCS_Y_DECISIONES.md).
+Para una inmersión detallada en los patrones de diseño y decisiones estructurales, consulte [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/INDEX.md`](docs/INDEX.md) y [`docs/BACKLOG.md`](docs/BACKLOG.md).
 
 ---
 
