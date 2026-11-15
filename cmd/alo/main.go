@@ -15,6 +15,7 @@ import (
 	"github.com/allostasis/alo/internal/adapters/tracker_plane"
 	"github.com/allostasis/alo/internal/app"
 	"github.com/allostasis/alo/internal/domain/clock"
+	"github.com/allostasis/alo/internal/domain/issue"
 	"github.com/allostasis/alo/internal/domain/ledger"
 	"github.com/allostasis/alo/internal/domain/workspace"
 	"github.com/allostasis/alo/internal/presentation/errors"
@@ -46,6 +47,26 @@ func initCockpitService() (*app.CockpitService, *sqlite.Store, *gitcli.GitExecut
 
 	svc := app.NewCockpitService(store, gitExec, clk)
 	return svc, store, gitExec, nil
+}
+
+func initTrackerService() (*app.TrackerService, *sqlite.Store, error) {
+	if dbPath == "" {
+		dbPath = app.DefaultDatabasePath()
+	}
+
+	store, err := sqlite.NewStore(dbPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error al inicializar base de datos: %w", err)
+	}
+
+	planeCfg := tracker_plane.LoadConfigFromEnv()
+	var client *tracker_plane.Client
+	if planeCfg.APIKey != "" {
+		client = tracker_plane.NewClient(planeCfg)
+	}
+
+	svc := app.NewTrackerService(store, client)
+	return svc, store, nil
 }
 
 func main() {
@@ -502,8 +523,307 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 	}
 	syncCmd.Flags().IntVar(&limitFlag, "limit", 20, "Límite máximo de eventos outbox a procesar por lote")
 
+	// 7. Comando ticket (Gestión soberana e inspección de tareas)
+	ticketCmd := &cobra.Command{
+		Use:     "ticket",
+		Aliases: []string{"issue", "issues"},
+		Short:   "Consulta, búsqueda tolerante y gestión de tareas",
+	}
+
+	var ticketProjectFlag string
+	var ticketStateFlag string
+	var ticketLimitFlag int
+	var ticketTextFlag string
+	var ticketAllProjectsFlag, ticketBriefFlag, ticketMineFlag, ticketOpenFlag bool
+
+	ticketListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "Lista tareas registradas en la base de datos local",
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitError(err, "DATABASE_ERROR", "Verifica la ruta a la base de datos", jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := context.Background()
+			var items []issue.WorkItem
+
+			targetProject := ticketProjectFlag
+			if ticketAllProjectsFlag {
+				targetProject = ""
+			}
+
+			if ticketTextFlag != "" {
+				items, err = svc.Search(ctx, ticketTextFlag, targetProject, ticketLimitFlag)
+			} else {
+				filter := issue.IssueFilter{
+					ProjectKey: targetProject,
+					State:      ticketStateFlag,
+					Limit:      ticketLimitFlag,
+				}
+				if ticketOpenFlag {
+					filter.StateGroup = "started"
+				}
+				items, err = svc.List(ctx, filter)
+			}
+			if err != nil {
+				errors.EmitError(err, "QUERY_FAILED", "Error al consultar tareas", jsonFlag)
+			}
+
+			if jsonFlag {
+				payload := map[string]interface{}{
+					"count":   len(items),
+					"results": items,
+					"schema":  "plane-tracker/1",
+					"view":    "list",
+				}
+				errors.EmitSuccess(payload, true)
+				return
+			}
+
+			if len(items) == 0 {
+				fmt.Println("No se encontraron tareas.")
+				return
+			}
+
+			fmt.Printf("%-14s %-12s %-8s %s\n", "TICKET", "ESTADO", "PRIO", "TÍTULO")
+			fmt.Println(strings.Repeat("─", 80))
+			for _, it := range items {
+				st := it.StateName
+				if st == "" {
+					st = string(it.State)
+				}
+				fmt.Printf("%-14s %-12s %-8s %s\n", it.Key, st, it.Priority, it.Title)
+			}
+		},
+	}
+	ticketListCmd.Flags().StringVarP(&ticketProjectFlag, "project", "p", "", "Filtrar por proyecto (ej. OMNIFY, OPS)")
+	ticketListCmd.Flags().StringVarP(&ticketStateFlag, "state", "s", "", "Filtrar por estado (ej. Progreso, Backlog)")
+	ticketListCmd.Flags().IntVarP(&ticketLimitFlag, "limit", "l", 30, "Límite de resultados")
+	ticketListCmd.Flags().StringVar(&ticketTextFlag, "text", "", "Búsqueda por texto libre")
+	ticketListCmd.Flags().BoolVar(&ticketAllProjectsFlag, "all-projects", false, "Buscar en todos los proyectos")
+	ticketListCmd.Flags().BoolVar(&ticketBriefFlag, "brief", false, "Salida concisa")
+	ticketListCmd.Flags().BoolVar(&ticketMineFlag, "mine", false, "Mis tareas")
+	ticketListCmd.Flags().BoolVar(&ticketOpenFlag, "open", false, "Solo tareas abiertas")
+
+	ticketSearchCmd := &cobra.Command{
+		Use:   "search <término>",
+		Short: "Búsqueda tolerante en títulos, etiquetas y descripciones",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitError(err, "DATABASE_ERROR", "Verifica la ruta a la base de datos", jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := context.Background()
+			items, err := svc.Search(ctx, args[0], ticketProjectFlag, ticketLimitFlag)
+			if err != nil {
+				errors.EmitError(err, "SEARCH_FAILED", "Error al buscar tareas", jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(items, true)
+				return
+			}
+
+			if len(items) == 0 {
+				fmt.Printf("No se encontraron tareas con el término '%s'.\n", args[0])
+				return
+			}
+
+			fmt.Printf("Resultados para '%s':\n", args[0])
+			fmt.Printf("%-14s %-12s %-8s %s\n", "TICKET", "ESTADO", "PRIO", "TÍTULO")
+			fmt.Println(strings.Repeat("─", 80))
+			for _, it := range items {
+				st := it.StateName
+				if st == "" {
+					st = string(it.State)
+				}
+				fmt.Printf("%-14s %-12s %-8s %s\n", it.Key, st, it.Priority, it.Title)
+			}
+		},
+	}
+	ticketSearchCmd.Flags().StringVarP(&ticketProjectFlag, "project", "p", "", "Filtrar por proyecto")
+	ticketSearchCmd.Flags().IntVarP(&ticketLimitFlag, "limit", "l", 20, "Límite de resultados")
+
+	ticketGetCmd := &cobra.Command{
+		Use:   "get <TICKET-ID>",
+		Short: "Obtiene el detalle completo de una tarea",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitError(err, "DATABASE_ERROR", "Verifica la ruta a la base de datos", jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := context.Background()
+			item, err := svc.Get(ctx, args[0])
+			if err != nil {
+				errors.EmitError(err, "NOT_FOUND", fmt.Sprintf("Verifica la clave de la tarea: %s", args[0]), jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(item, true)
+				return
+			}
+
+			st := item.StateName
+			if st == "" {
+				st = string(item.State)
+			}
+			fmt.Printf("📌 %s: %s\n", item.Key, item.Title)
+			fmt.Printf("   • Estado    : %s\n", st)
+			fmt.Printf("   • Prioridad : %s\n", item.Priority)
+			if item.Assignee != "" {
+				fmt.Printf("   • Asignado  : %s\n", item.Assignee)
+			}
+			if item.Description != "" {
+				fmt.Printf("\n📄 Descripción:\n   %s\n", strings.ReplaceAll(item.Description, "\n", "\n   "))
+			}
+		},
+	}
+
+	var createProjectFlag, createPriorityFlag, createStateFlag, createDescFlag string
+	ticketCreateCmd := &cobra.Command{
+		Use:   "create <título>",
+		Short: "Crea una nueva tarea (en Plane CE o local si está offline)",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitError(err, "DATABASE_ERROR", "Verifica la ruta a la base de datos", jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := context.Background()
+			created, err := svc.Create(ctx, issue.CreateIssueInput{
+				ProjectKey:  createProjectFlag,
+				Title:       args[0],
+				Description: createDescFlag,
+				Priority:    createPriorityFlag,
+				StateName:   createStateFlag,
+			})
+			if err != nil {
+				errors.EmitError(err, "CREATE_FAILED", "No se pudo crear la tarea", jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(created, true)
+				return
+			}
+
+			fmt.Printf("✓ Tarea creada exitosamente: %s (%s)\n", created.Key, created.Title)
+		},
+	}
+	ticketCreateCmd.Flags().StringVarP(&createProjectFlag, "project", "p", "OMNIFY", "Proyecto destino (ej. OMNIFY, OPS)")
+	ticketCreateCmd.Flags().StringVar(&createPriorityFlag, "priority", "medium", "Prioridad (low, medium, high, urgent)")
+	ticketCreateCmd.Flags().StringVar(&createStateFlag, "state", "Pendiente", "Estado inicial")
+	ticketCreateCmd.Flags().StringVar(&createDescFlag, "desc", "", "Descripción de la tarea")
+
+	var updateStateFlag, updatePriorityFlag, updateTitleFlag string
+	ticketUpdateCmd := &cobra.Command{
+		Use:   "update <TICKET-ID>",
+		Short: "Actualiza el estado, prioridad o título de una tarea",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitError(err, "DATABASE_ERROR", "Verifica la ruta a la base de datos", jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := context.Background()
+			input := issue.UpdateIssueInput{}
+			if updateStateFlag != "" {
+				input.StateName = &updateStateFlag
+			}
+			if updatePriorityFlag != "" {
+				input.Priority = &updatePriorityFlag
+			}
+			if updateTitleFlag != "" {
+				input.Title = &updateTitleFlag
+			}
+
+			updated, err := svc.Update(ctx, args[0], input)
+			if err != nil {
+				errors.EmitError(err, "UPDATE_FAILED", "No se pudo actualizar la tarea", jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(updated, true)
+				return
+			}
+
+			fmt.Printf("✓ Tarea %s actualizada: Estado=%s Prioridad=%s\n", updated.Key, updated.StateName, updated.Priority)
+		},
+	}
+	ticketUpdateCmd.Flags().StringVar(&updateStateFlag, "state", "", "Nuevo estado")
+	ticketUpdateCmd.Flags().StringVar(&updatePriorityFlag, "priority", "", "Nueva prioridad")
+	ticketUpdateCmd.Flags().StringVar(&updateTitleFlag, "title", "", "Nuevo título")
+
+	var syncAllProjectsFlag bool
+	ticketSyncCmd := &cobra.Command{
+		Use:   "sync",
+		Short: "Descarga y actualiza proyectos, estados y tareas desde Plane CE",
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitError(err, "DATABASE_ERROR", "Verifica la ruta a la base de datos", jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := context.Background()
+			count, err := svc.Sync(ctx, ticketProjectFlag, syncAllProjectsFlag)
+			if err != nil {
+				errors.EmitError(err, "SYNC_FAILED", "Verifica la conectividad con Plane CE", jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(map[string]interface{}{"synced_issues": count}, true)
+				return
+			}
+
+			fmt.Printf("🔄 Sincronización completada: %d tareas actualizadas en SQLite.\n", count)
+		},
+	}
+	ticketSyncCmd.Flags().StringVarP(&ticketProjectFlag, "project", "p", "", "Proyecto específico a sincronizar")
+	ticketSyncCmd.Flags().BoolVar(&syncAllProjectsFlag, "all-projects", false, "Sincronizar todos los proyectos")
+
+	ticketWhoamiCmd := &cobra.Command{
+		Use:   "whoami",
+		Short: "Verifica la conectividad y credenciales con Plane CE",
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitError(err, "DATABASE_ERROR", "Verifica la ruta a la base de datos", jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := context.Background()
+			user, err := svc.Whoami(ctx)
+			if err != nil {
+				errors.EmitError(err, "AUTH_FAILED", "Verifica PLANE_API_KEY y PLANE_BASE_URL", jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(user, true)
+				return
+			}
+
+			fmt.Println("✅ Conexión con Plane CE verificada:")
+			fmt.Printf("   • Usuario : %s (%s %s)\n", user.Username, user.FirstName, user.LastName)
+			fmt.Printf("   • Email   : %s\n", user.Email)
+			fmt.Printf("   • ID      : %s\n", user.ID)
+		},
+	}
+
+	ticketCmd.AddCommand(ticketListCmd, ticketSearchCmd, ticketGetCmd, ticketCreateCmd, ticketUpdateCmd, ticketSyncCmd, ticketWhoamiCmd)
 	wsCmd.AddCommand(wsListCmd, wsCreateCmd, wsPruneCmd)
-	rootCmd.AddCommand(versionCmd, agendaCmd, loadCmd, logCmd, syncCmd, wsCmd)
+	rootCmd.AddCommand(versionCmd, agendaCmd, loadCmd, logCmd, syncCmd, wsCmd, ticketCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

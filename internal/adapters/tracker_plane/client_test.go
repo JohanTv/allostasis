@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/allostasis/alo/internal/adapters/tracker_plane"
+	"github.com/allostasis/alo/internal/domain/issue"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
@@ -90,5 +91,82 @@ func TestClient_FlushOutbox_Success(t *testing.T) {
 	}
 	if state != "sent" || commentID != "comment-plane-777" {
 		t.Errorf("estado o commentID inesperado: state=%s, commentID=%s", state, commentID)
+	}
+}
+
+func TestClient_TrackerOperations(t *testing.T) {
+	// Simular mock server con rutas completas de Plane CE
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-api-key") != "secret-token-123" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v1/users/me/":
+			_, _ = w.Write([]byte(`{"id":"usr-1","email":"johan@example.com","first_name":"Johan","last_name":"Tv","username":"johantv"}`))
+
+		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/":
+			_, _ = w.Write([]byte(`{"results":[{"id":"proj-omnify","identifier":"OMNIFY","name":"Omnify Platform"}]}`))
+
+		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/proj-omnify/states/":
+			_, _ = w.Write([]byte(`{"results":[{"id":"st-prog","name":"Progreso","slug":"progreso","group":"started"}]}`))
+
+		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/proj-omnify/issues/" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"results":[{"id":"iss-1","sequence_id":269,"name":"[FEAT] Canal de atención Facebook Messenger e Instagram DM","priority":"high","state_detail":{"name":"Backlog","group":"backlog"},"labels":["backend","feat"]}]}`))
+
+		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/proj-omnify/issues/" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"iss-created","sequence_id":270,"name":"[FEAT] Nuevo Canal","priority":"medium"}`))
+
+		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/proj-omnify/issues/iss-1/" && r.Method == http.MethodPatch:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"iss-1","name":"Actualizado"}`))
+
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := tracker_plane.Config{
+		BaseURL:   server.URL,
+		APIKey:    "secret-token-123",
+		Workspace: "teamprogra",
+		Timeout:   2 * time.Second,
+	}
+	client := tracker_plane.NewClient(cfg)
+	ctx := context.Background()
+
+	// 1. Whoami
+	user, err := client.Whoami(ctx)
+	if err != nil {
+		t.Fatalf("Whoami falló: %v", err)
+	}
+	if user.Email != "johan@example.com" || user.Username != "johantv" {
+		t.Errorf("usuario inesperado: %+v", user)
+	}
+
+	// 2. CreateIssueRemote
+	created, err := client.CreateIssueRemote(ctx, "proj-omnify", issue.CreateIssueInput{
+		ProjectKey: "OMNIFY",
+		Title:      "[FEAT] Nuevo Canal",
+		Priority:   "medium",
+	}, "st-prog")
+	if err != nil {
+		t.Fatalf("CreateIssueRemote falló: %v", err)
+	}
+	if created.Key != "OMNIFY-270" {
+		t.Errorf("clave inesperada para tarea creada: %s", created.Key)
+	}
+
+	// 3. UpdateIssueRemote
+	title := "Actualizado"
+	err = client.UpdateIssueRemote(ctx, "proj-omnify", "iss-1", issue.UpdateIssueInput{
+		Title: &title,
+	}, "")
+	if err != nil {
+		t.Fatalf("UpdateIssueRemote falló: %v", err)
 	}
 }

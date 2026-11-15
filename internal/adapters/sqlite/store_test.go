@@ -80,4 +80,60 @@ func TestStore_InMemoryIntegration(t *testing.T) {
 	if totalDuration != 90*time.Minute {
 		t.Errorf("KleeMeasure esperado 90m, obtuvo %v", totalDuration)
 	}
+
+	// 3. Probar Búsqueda Tolerante (incluyendo descripción en snapshot)
+	snapshotJSON := `{"id":"uuid-269","name":"[FEAT] Canal de atención Facebook Messenger e Instagram DM","description":"Integrar Facebook Messenger como redes sociales"}`
+	item2 := &issue.WorkItem{
+		ID:         "uuid-269",
+		Key:        "OMNIFY-269",
+		ProjectID:  "proj-omnify",
+		Title:      "[FEAT] Canal de atención Facebook Messenger e Instagram DM",
+		StateName:  "Backlog",
+		StateGroup: "backlog",
+		Priority:   "high",
+		LabelsCSV:  "backend,feat",
+	}
+	if err := store.SaveIssue(ctx, item2); err != nil {
+		t.Fatalf("error guardando issue 2: %v", err)
+	}
+	if err := store.SaveIssueSnapshot(ctx, item2.ID, item2.Key, snapshotJSON); err != nil {
+		t.Fatalf("error guardando snapshot: %v", err)
+	}
+
+	// Buscar por "redes sociales" que NO está en el título pero SÍ en la descripción
+	found, err := store.SearchIssues(ctx, "redes sociales", "OMNIFY", 10)
+	if err != nil {
+		t.Fatalf("error en SearchIssues: %v", err)
+	}
+	if len(found) != 1 || found[0].Key != "OMNIFY-269" {
+		t.Fatalf("se esperaba encontrar OMNIFY-269 buscando por 'redes sociales', obtuvo: %+v", found)
+	}
+
+	// 4. Probar GetIssue con enriquecimiento de descripción
+	loaded, err := store.GetIssue(ctx, "OMNIFY-269")
+	if err != nil {
+		t.Fatalf("error en GetIssue: %v", err)
+	}
+	if loaded.Description == "" {
+		t.Errorf("GetIssue debió enriquecer la descripción desde el snapshot")
+	}
+
+	// 5. Probar Proyectos y Estados
+	p := sqlite.ProjectRecord{Identifier: "OMNIFY", ProjectID: "proj-omnify", Name: "Omnify Platform", Workspace: "teamprogra"}
+	if err := store.SaveProject(ctx, p); err != nil {
+		t.Fatalf("error en SaveProject: %v", err)
+	}
+	pLoaded, err := store.GetProject(ctx, "OMNIFY")
+	if err != nil || pLoaded.ProjectID != "proj-omnify" {
+		t.Fatalf("error recuperando proyecto: %v", err)
+	}
+
+	st := sqlite.StateRecord{ID: "st-prog", ProjectID: "proj-omnify", Name: "Progreso", Slug: "progreso", GroupName: "started"}
+	if err := store.SaveState(ctx, st); err != nil {
+		t.Fatalf("error en SaveState: %v", err)
+	}
+	stLoaded, err := store.GetState(ctx, "proj-omnify", "Progreso")
+	if err != nil || stLoaded.GroupName != "started" {
+		t.Fatalf("error recuperando estado: %v", err)
+	}
 }
