@@ -29,4 +29,5 @@ install: build
 	@mkdir -p $(HOME)/.local/bin
 	@cp $(BUILD_DIR)/$(BINARY_NAME) $(HOME)/.local/bin/$(BINARY_NAME)
 	@ln -sf $(HOME)/.local/bin/$(BINARY_NAME) $(HOME)/.local/bin/allostasis
-	@echo "✔ Instalado en ~/.local/bin/alo y symlink allostasis"
+	@ln -sf $(HOME)/.local/bin/$(BINARY_NAME) $(HOME)/.local/bin/allo
+	@echo "✔ Instalado en ~/.local/bin/alo y symlinks allostasis, allo"
