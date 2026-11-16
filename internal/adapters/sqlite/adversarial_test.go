@@ -47,7 +47,7 @@ func TestSQLite_Concurrency_FileBased(t *testing.T) {
 					ID:        fmt.Sprintf("id-%d-%d", workerID, j),
 					Key:       ticketKey,
 					Title:     fmt.Sprintf("Concurrent task %d-%d", workerID, j),
-					State:     issue.StateInProgress,
+					State:     issue.StateStarted,
 					Priority:  "high",
 					Assignee:  fmt.Sprintf("worker-%d", workerID),
 					CreatedAt: time.Now(),

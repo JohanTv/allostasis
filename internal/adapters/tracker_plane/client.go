@@ -105,6 +105,22 @@ func parseSequenceID(v interface{}) int {
 	}
 }
 
+// parseUserID extrae tolerante un UUID de usuario desde una cadena o un objeto map {"id": "..."}.
+func parseUserID(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	switch val := v.(type) {
+	case string:
+		return strings.TrimSpace(val)
+	case map[string]interface{}:
+		if id, ok := val["id"].(string); ok {
+			return strings.TrimSpace(id)
+		}
+	}
+	return ""
+}
+
 // Whoami valida la conectividad y las credenciales con Plane CE retornando datos del usuario actual.
 func (c *Client) Whoami(ctx context.Context) (*UserInfo, error) {
 	if c.cfg.APIKey == "" {
@@ -468,6 +484,25 @@ func (c *Client) FetchIssues(ctx context.Context, projectID, projectKey string, 
 			item.Assignee = assigneeIDs[0]
 		}
 
+		// Extraer creador tolerando string UUID o map {id:...}
+		createdBy := parseUserID(it["created_by"])
+		if createdBy == "" {
+			createdBy = parseUserID(it["created_by_detail"])
+		}
+		item.CreatedBy = createdBy
+
+		// Extraer fechas upstream agnósticas
+		if upStr, ok := it["updated_at"].(string); ok && upStr != "" {
+			if t, err := time.Parse(time.RFC3339, upStr); err == nil {
+				item.RemoteUpdatedAt = &t
+			}
+		}
+		if crStr, ok := it["created_at"].(string); ok && crStr != "" {
+			if t, err := time.Parse(time.RFC3339, crStr); err == nil {
+				item.CreatedAt = t
+			}
+		}
+
 		if labelsArr, ok := it["labels"].([]interface{}); ok && labelsArr != nil {
 			var labelNames []string
 			for _, l := range labelsArr {
@@ -604,16 +639,30 @@ func (c *Client) CreateIssueRemote(ctx context.Context, projectID string, input 
 		ticketKey = fmt.Sprintf("%s-%s", input.ProjectKey, id)
 	}
 
+	createdBy := parseUserID(created["created_by"])
+	if createdBy == "" {
+		createdBy = parseUserID(created["created_by_detail"])
+	}
+
+	var remoteUpdatedAt *time.Time
+	if upStr, ok := created["updated_at"].(string); ok && upStr != "" {
+		if t, err := time.Parse(time.RFC3339, upStr); err == nil {
+			remoteUpdatedAt = &t
+		}
+	}
+
 	return &issue.WorkItem{
-		ID:          id,
-		Key:         ticketKey,
-		ProjectID:   projectID,
-		ProjectKey:  input.ProjectKey,
-		SequenceID:  seq,
-		Title:       input.Title,
-		Description: input.Description,
-		StateName:   input.StateName,
-		Priority:    input.Priority,
+		ID:              id,
+		Key:             ticketKey,
+		ProjectID:       projectID,
+		ProjectKey:      input.ProjectKey,
+		SequenceID:      seq,
+		Title:           input.Title,
+		Description:     input.Description,
+		StateName:       input.StateName,
+		Priority:        input.Priority,
+		CreatedBy:       createdBy,
+		RemoteUpdatedAt: remoteUpdatedAt,
 	}, nil
 }
 

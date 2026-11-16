@@ -56,6 +56,11 @@ type IssueStore interface {
 	// Reportes
 	GetTimeReport(ctx context.Context, fromDate, toDate, track, workerType string) (*issue.TimeReport, error)
 	GetFlowReport(ctx context.Context, fromDate, toDate string) (*issue.FlowReport, error)
+
+	// Perfil de Usuario e Historial
+	SaveUserProfile(ctx context.Context, profile issue.UserInfo) error
+	GetUserProfile(ctx context.Context) (*issue.UserInfo, error)
+	RecordAssignmentEvent(ctx context.Context, ticketID, userID string) error
 }
 
 // WorklogStore define el contrato para el ledger soberano de tiempo e intervalos.

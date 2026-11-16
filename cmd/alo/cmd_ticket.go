@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/allostasis/alo/internal/domain/issue"
@@ -22,7 +21,7 @@ func newTicketCmd() *cobra.Command {
 	var ticketStateFlag string
 	var ticketLimitFlag int
 	var ticketTextFlag string
-	var ticketAllProjectsFlag, ticketBriefFlag, ticketMineFlag, ticketOpenFlag bool
+	var ticketAllProjectsFlag, ticketBriefFlag, ticketMineFlag, ticketOpenFlag, ticketCreatedFlag, ticketInvolvedFlag bool
 
 	// 1. ticket list
 	ticketListCmd := &cobra.Command{
@@ -52,6 +51,39 @@ func newTicketCmd() *cobra.Command {
 			if ticketTextFlag != "" {
 				items, err = svc.Search(ctx, ticketTextFlag, targetProject, ticketLimitFlag)
 			} else {
+				personCount := 0
+				if ticketMineFlag {
+					personCount++
+				}
+				if ticketCreatedFlag {
+					personCount++
+				}
+				if ticketInvolvedFlag {
+					personCount++
+				}
+				if personCount > 1 {
+					errors.EmitErrorWithDetail(fmt.Errorf("solo puedes especificar uno de --mine, --created o --involved"), errors.ErrorDetail{
+						Code:        "MUTUALLY_EXCLUSIVE_FLAGS",
+						Category:    errors.CategoryUserInput,
+						Hint:        "Usa exactamente un criterio de persona a la vez",
+						Recoverable: true,
+					}, errors.ExitUsageError, jsonFlag)
+				}
+
+				var userID string
+				if personCount == 1 {
+					resolvedID, idErr := svc.ResolveCurrentUserID(ctx)
+					if idErr != nil {
+						errors.EmitErrorWithDetail(idErr, errors.ErrorDetail{
+							Code:        "IDENTITY_UNRESOLVED",
+							Category:    errors.CategoryAuth,
+							Hint:        "Configura PLANE_ACTOR_UUID o ejecuta 'alo ticket whoami' con conexión para autenticarte",
+							Recoverable: true,
+						}, errors.ExitAuthError, jsonFlag)
+					}
+					userID = resolvedID
+				}
+
 				filter := issue.IssueFilter{
 					ProjectKey: targetProject,
 					State:      ticketStateFlag,
@@ -59,11 +91,13 @@ func newTicketCmd() *cobra.Command {
 					OpenOnly:   ticketOpenFlag,
 				}
 				if ticketMineFlag {
-					if actorUUID := os.Getenv("PLANE_ACTOR_UUID"); actorUUID != "" {
-						filter.Assignee = actorUUID
-					} else if user, whoErr := svc.Whoami(ctx); whoErr == nil && user != nil && user.ID != "" {
-						filter.Assignee = user.ID
-					}
+					filter.Assignee = userID
+				}
+				if ticketCreatedFlag {
+					filter.CreatedBy = userID
+				}
+				if ticketInvolvedFlag {
+					filter.InvolvedBy = userID
 				}
 				items, err = svc.List(ctx, filter)
 			}
@@ -107,7 +141,9 @@ func newTicketCmd() *cobra.Command {
 	ticketListCmd.Flags().StringVar(&ticketTextFlag, "text", "", "Búsqueda por texto libre")
 	ticketListCmd.Flags().BoolVar(&ticketAllProjectsFlag, "all-projects", false, "Buscar en todos los proyectos")
 	ticketListCmd.Flags().BoolVar(&ticketBriefFlag, "brief", false, "Salida concisa")
-	ticketListCmd.Flags().BoolVar(&ticketMineFlag, "mine", false, "Mis tareas")
+	ticketListCmd.Flags().BoolVar(&ticketMineFlag, "mine", false, "Solo tareas asignadas a ti")
+	ticketListCmd.Flags().BoolVar(&ticketCreatedFlag, "created", false, "Solo tareas creadas por ti")
+	ticketListCmd.Flags().BoolVar(&ticketInvolvedFlag, "involved", false, "Tareas asignadas, creadas o con actividad tuya")
 	ticketListCmd.Flags().BoolVar(&ticketOpenFlag, "open", false, "Solo tareas abiertas")
 
 	// 2. ticket search
@@ -719,7 +755,53 @@ func newTicketCmd() *cobra.Command {
 	}
 	ticketFocusCmd.AddCommand(ticketFocusSetCmd, ticketFocusClearCmd, ticketFocusStatusCmd)
 
-	ticketCmd.AddCommand(ticketListCmd, ticketSearchCmd, ticketGetCmd, ticketCreateCmd, ticketUpdateCmd, ticketSyncCmd, ticketWhoamiCmd, ticketLabelsCmd, ticketDeleteCmd, ticketLinkCmd, ticketFocusCmd)
+	// 12. ticket projects
+	ticketProjectsCmd := &cobra.Command{
+		Use:     "projects",
+		Aliases: []string{"proj"},
+		Short:   "Listar proyectos disponibles en el workspace",
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+
+			projects, err := svc.Projects(ctx)
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "PROJECTS_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(projects, true)
+				return
+			}
+
+			if len(projects) == 0 {
+				fmt.Println("No hay proyectos sincronizados. Ejecuta 'alo ticket sync' para descargar el catálogo.")
+				return
+			}
+
+			fmt.Printf("%-12s %-36s %s\n", "PROYECTO", "ID", "NOMBRE")
+			fmt.Println(strings.Repeat("─", 80))
+			for _, p := range projects {
+				fmt.Printf("%-12s %-36s %s\n", p.Identifier, p.ProjectID, p.Name)
+			}
+		},
+	}
+
+	ticketCmd.AddCommand(ticketListCmd, ticketSearchCmd, ticketGetCmd, ticketCreateCmd, ticketUpdateCmd, ticketSyncCmd, ticketWhoamiCmd, ticketLabelsCmd, ticketDeleteCmd, ticketLinkCmd, ticketFocusCmd, ticketProjectsCmd)
 
 	return ticketCmd
 }

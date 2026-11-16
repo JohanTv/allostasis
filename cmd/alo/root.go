@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/allostasis/alo/internal/adapters/gitcli"
@@ -144,8 +145,56 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 	cmd.AddCommand(newSyncCmd())
 	cmd.AddCommand(newWorkspaceCmd())
 	cmd.AddCommand(newTicketCmd())
+	cmd.AddCommand(newProjectsCmd())
 
 	return cmd
+}
+
+func newProjectsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "projects",
+		Aliases: []string{"proj"},
+		Short:   "Listar proyectos disponibles en el workspace",
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+
+			projects, err := svc.Projects(ctx)
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "PROJECTS_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(projects, true)
+				return
+			}
+
+			if len(projects) == 0 {
+				fmt.Println("No hay proyectos sincronizados. Ejecuta 'alo ticket sync' para descargar el catálogo.")
+				return
+			}
+
+			fmt.Printf("%-12s %-36s %s\n", "PROYECTO", "ID", "NOMBRE")
+			fmt.Println(strings.Repeat("─", 80))
+			for _, p := range projects {
+				fmt.Printf("%-12s %-36s %s\n", p.Identifier, p.ProjectID, p.Name)
+			}
+		},
+	}
 }
 
 func newVersionCmd() *cobra.Command {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -622,12 +623,45 @@ func (s *TrackerService) FlushOutbox(ctx context.Context, limit int) (*issue.Syn
 	return report, nil
 }
 
-// Whoami consulta la identidad y validez de la sesión en Plane CE.
+// Whoami consulta la identidad y validez de la sesión en Plane CE y la persiste localmente.
 func (s *TrackerService) Whoami(ctx context.Context) (*issue.UserInfo, error) {
 	if s.client == nil {
 		return nil, fmt.Errorf("cliente de Plane no configurado")
 	}
-	return s.client.Whoami(ctx)
+	user, err := s.client.Whoami(ctx)
+	if err == nil && user != nil && user.ID != "" && s.store != nil {
+		_ = s.store.SaveUserProfile(ctx, *user)
+	}
+	return user, err
+}
+
+// ResolveCurrentUserID determina el UUID del usuario actual mediante la jerarquía canónica Fail-Closed:
+// 1. PLANE_ACTOR_UUID (variable de entorno, 0ms)
+// 2. user_profile en SQLite local (<1ms, 100% offline)
+// 3. HTTP Whoami hacia el tracker remoto (guarda en SQLite si tiene éxito)
+// 4. Retorna error si no se pudo determinar la identidad (Fail-Closed).
+func (s *TrackerService) ResolveCurrentUserID(ctx context.Context) (string, error) {
+	// 1. Variable de entorno explícita
+	if actorUUID := strings.TrimSpace(os.Getenv("PLANE_ACTOR_UUID")); actorUUID != "" {
+		return actorUUID, nil
+	}
+
+	// 2. Caché local en SQLite
+	if s.store != nil {
+		if u, err := s.store.GetUserProfile(ctx); err == nil && u != nil && strings.TrimSpace(u.ID) != "" {
+			return strings.TrimSpace(u.ID), nil
+		}
+	}
+
+	// 3. Fallback a Whoami remoto (y auto-caché)
+	if s.client != nil {
+		if u, err := s.Whoami(ctx); err == nil && u != nil && strings.TrimSpace(u.ID) != "" {
+			return strings.TrimSpace(u.ID), nil
+		}
+	}
+
+	// 4. Fail-Closed
+	return "", fmt.Errorf("no se pudo determinar tu identidad de usuario; configura PLANE_ACTOR_UUID o ejecuta 'alo ticket whoami' con conexión")
 }
 
 // Projects retorna los proyectos registrados en la caché local.

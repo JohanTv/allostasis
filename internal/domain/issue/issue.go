@@ -4,37 +4,39 @@ import (
 	"time"
 )
 
-// State representa el estado alostático y de ciclo de vida de una tarea.
+// State representa el grupo canónico alostático y de ciclo de vida de una tarea.
 type State string
 
 const (
-	StateBacklog    State = "backlog"
-	StateInProgress State = "in_progress"
-	StatePaused     State = "paused"
-	StateDone       State = "done"
-	StateCancelled  State = "cancelled"
+	StateBacklog   State = "backlog"
+	StateUnstarted State = "unstarted"
+	StateStarted   State = "started"
+	StateCompleted State = "completed"
+	StateCancelled State = "cancelled"
 )
 
 // WorkItem representa un ticket o elemento de trabajo en el tracker de Allostasis.
 type WorkItem struct {
-	ID              string    `json:"id"`
-	Key             string    `json:"key"` // ej. OMNIFY-175, PROJ-10
-	ProjectID       string    `json:"project_id,omitempty"`
-	ProjectKey      string    `json:"project_key,omitempty"`
-	SequenceID      int       `json:"sequence_id,omitempty"`
-	Title           string    `json:"title"`
-	Description     string    `json:"description,omitempty"`
-	DescriptionHTML string    `json:"description_html,omitempty"`
-	State           State     `json:"state"`
-	StateName       string    `json:"state_name,omitempty"`
-	StateGroup      string    `json:"state_group,omitempty"`
-	Priority        string    `json:"priority"`
-	Assignee        string    `json:"assignee,omitempty"`
-	Assignees       []string  `json:"assignees,omitempty"`
-	Labels          []string  `json:"labels,omitempty"`
-	LabelsCSV       string    `json:"labels_csv,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID              string     `json:"id"`
+	Key             string     `json:"key"` // ej. OMNIFY-175, PROJ-10
+	ProjectID       string     `json:"project_id,omitempty"`
+	ProjectKey      string     `json:"project_key,omitempty"`
+	SequenceID      int        `json:"sequence_id,omitempty"`
+	Title           string     `json:"title"`
+	Description     string     `json:"description,omitempty"`
+	DescriptionHTML string     `json:"description_html,omitempty"`
+	State           State      `json:"state"`
+	StateName       string     `json:"state_name,omitempty"`
+	StateGroup      string     `json:"state_group,omitempty"`
+	Priority        string     `json:"priority"`
+	Assignee        string     `json:"assignee,omitempty"`
+	Assignees       []string   `json:"assignees,omitempty"`
+	CreatedBy       string     `json:"created_by,omitempty"`
+	Labels          []string   `json:"labels,omitempty"`
+	LabelsCSV       string     `json:"labels_csv,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	RemoteUpdatedAt *time.Time `json:"remote_updated_at,omitempty"`
 }
 
 // CreateIssueInput encapsula los datos requeridos para crear una tarea.
@@ -62,6 +64,8 @@ type IssueFilter struct {
 	State      string
 	StateGroup string
 	Assignee   string
+	CreatedBy  string
+	InvolvedBy string
 	OpenOnly   bool
 	Query      string
 	Limit      int

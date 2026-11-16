@@ -24,7 +24,7 @@ func TestStore_InMemoryIntegration(t *testing.T) {
 		Key:         "OMNIFY-100",
 		Title:       "Validar adaptador Pure-Go SQLite",
 		Description: "Sin dependencias CGO y con soporte FTS5",
-		State:       issue.StateInProgress,
+		State:       issue.StateStarted,
 		Priority:    "high",
 		Assignee:    "johan",
 		CreatedAt:   time.Now(),
@@ -179,5 +179,54 @@ func TestStore_InMemoryIntegration(t *testing.T) {
 	}
 	if len(myItems) != 1 || myItems[0].Key != "OMNIFY-102" {
 		t.Errorf("se esperaba 1 tarea para usr-johan (OMNIFY-102), obtenidos: %+v", myItems)
+	}
+
+	// 1. Filtrar por CreatedBy (OMNIFY-259 creado por usuario sin asignado)
+	itemCreated := &issue.WorkItem{
+		ID:         "uuid-created",
+		Key:        "OMNIFY-259",
+		ProjectID:  "proj-omnify",
+		Title:      "Iniciativa creada por Johan",
+		StateName:  "Progreso",
+		StateGroup: "started",
+		Priority:   "high",
+		CreatedBy:  "usr-johan",
+		Assignees:  nil, // sin asignado
+	}
+	_ = store.SaveIssue(ctx, itemCreated)
+
+	createdItems, err := store.ListIssuesFiltered(ctx, issue.IssueFilter{ProjectKey: "OMNIFY", CreatedBy: "usr-johan"})
+	if err != nil {
+		t.Fatalf("error ListIssuesFiltered CreatedBy: %v", err)
+	}
+	if len(createdItems) != 1 || createdItems[0].Key != "OMNIFY-259" {
+		t.Errorf("se esperaba 1 tarea creada por usr-johan (OMNIFY-259), obtenidos: %+v", createdItems)
+	}
+
+	// 2. Filtrar por InvolvedBy (debe incluir OMNIFY-102 por asignado y OMNIFY-259 por creador)
+	involvedItems, err := store.ListIssuesFiltered(ctx, issue.IssueFilter{ProjectKey: "OMNIFY", InvolvedBy: "usr-johan"})
+	if err != nil {
+		t.Fatalf("error ListIssuesFiltered InvolvedBy: %v", err)
+	}
+	if len(involvedItems) < 2 {
+		t.Errorf("se esperaban al menos 2 tareas involucradas para usr-johan, obtenidos: %d", len(involvedItems))
+	}
+
+	// 3. Probar UserProfile
+	userProfile := issue.UserInfo{
+		ID:          "usr-johan",
+		Username:    "johantv",
+		Email:       "johan@example.com",
+		DisplayName: "Johan Tanta",
+	}
+	if err := store.SaveUserProfile(ctx, userProfile); err != nil {
+		t.Fatalf("error SaveUserProfile: %v", err)
+	}
+	cachedProfile, err := store.GetUserProfile(ctx)
+	if err != nil {
+		t.Fatalf("error GetUserProfile: %v", err)
+	}
+	if cachedProfile == nil || cachedProfile.ID != "usr-johan" {
+		t.Errorf("perfil recuperado inválido: %+v", cachedProfile)
 	}
 }
