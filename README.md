@@ -105,10 +105,11 @@ allostasis/
 │   ├── decisions/              # Architecture Decision Records (ADRs)
 │   ├── rfcs/                   # Requests for Comments (RFCs)
 │   └── references/             # Suite de gobernanza operativa (SDLC, Living Tickets, Handoff)
+├── AGENTS.md                   # 🤖 Directrices de ingeniería, invariantes y onboarding para agentes de IA
 └── Makefile                    # Compilación, tests con -race e instalación local
 ```
 
-Para una inmersión detallada en los patrones de diseño y decisiones estructurales, consulte [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/INDEX.md`](docs/INDEX.md) y [`docs/BACKLOG.md`](docs/BACKLOG.md).
+Para directrices de contribución y desarrollo para agentes de IA, consulte [`AGENTS.md`](AGENTS.md). Para una inmersión detallada en los patrones de diseño y decisiones estructurales, consulte [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/INDEX.md`](docs/INDEX.md) y [`docs/BACKLOG.md`](docs/BACKLOG.md).
 
 ---
 
