@@ -187,6 +187,7 @@ func (s *Store) migrateBaseline() error {
 		client_id TEXT NOT NULL DEFAULT '',
 		ticket_ref TEXT NOT NULL,
 		payload_json TEXT NOT NULL DEFAULT '{}',
+		mutation_type TEXT NOT NULL DEFAULT '',
 		state TEXT NOT NULL DEFAULT 'pending',
 		attempts INTEGER NOT NULL DEFAULT 0,
 		last_error TEXT NOT NULL DEFAULT '',
@@ -233,6 +234,7 @@ func (s *Store) migrateBaseline() error {
 	_, _ = s.db.Exec(`ALTER TABLE outbox ADD COLUMN target_workspace TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.Exec(`ALTER TABLE outbox ADD COLUMN plane_comment_id TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.Exec(`ALTER TABLE outbox ADD COLUMN sent_at TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE outbox ADD COLUMN mutation_type TEXT NOT NULL DEFAULT ''`)
 	return nil
 }
 
@@ -598,9 +600,31 @@ func (s *Store) SaveIssue(ctx context.Context, item *issue.WorkItem) error {
 
 // EnqueueOutbox registra una mutación diferida hacia el tracker upstream.
 func (s *Store) EnqueueOutbox(ctx context.Context, clientID, ticketRef, payloadJSON, targetWS string) error {
-	query := `INSERT INTO outbox(client_id, ticket_ref, payload_json, target_workspace, state, created_at)
-	          VALUES(?, ?, ?, ?, 'pending', ?)`
-	_, err := s.db.ExecContext(ctx, query, clientID, ticketRef, payloadJSON, targetWS, time.Now().Format(time.RFC3339))
+	mutationType := "comment"
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(payloadJSON), &m); err == nil && m != nil {
+		_, hasCommentHTML := m["comment_html"]
+		_, hasComment := m["comment"]
+		_, hasBody := m["body"]
+		if !hasCommentHTML && !hasComment && !hasBody {
+			if _, hasTitle := m["title"]; hasTitle {
+				mutationType = "create_issue"
+			} else if _, hasName := m["name"]; hasName {
+				mutationType = "create_issue"
+			}
+		}
+	}
+	return s.EnqueueOutboxWithMutation(ctx, clientID, ticketRef, payloadJSON, targetWS, mutationType)
+}
+
+// EnqueueOutboxWithMutation registra una mutación diferida con tipo explícito en la outbox.
+func (s *Store) EnqueueOutboxWithMutation(ctx context.Context, clientID, ticketRef, payloadJSON, targetWS, mutationType string) error {
+	if mutationType == "" {
+		mutationType = "comment"
+	}
+	query := `INSERT INTO outbox(client_id, ticket_ref, payload_json, mutation_type, target_workspace, state, created_at)
+	          VALUES(?, ?, ?, ?, ?, 'pending', ?)`
+	_, err := s.db.ExecContext(ctx, query, clientID, ticketRef, payloadJSON, mutationType, targetWS, time.Now().Format(time.RFC3339))
 	return err
 }
 
@@ -911,10 +935,10 @@ func (s *Store) GetFocusStatus(ctx context.Context, sessionID string) (*issue.Fo
 func (s *Store) ListOutbox(ctx context.Context, includeAll bool) ([]issue.OutboxRecord, error) {
 	var query string
 	if includeAll {
-		query = `SELECT id, COALESCE(client_id, ''), ticket_ref, payload_json, state, attempts, COALESCE(last_error, ''), COALESCE(target_workspace, ''), COALESCE(plane_comment_id, ''), COALESCE(sent_at, ''), created_at
+		query = `SELECT id, COALESCE(client_id, ''), ticket_ref, payload_json, COALESCE(mutation_type, ''), state, attempts, COALESCE(last_error, ''), COALESCE(target_workspace, ''), COALESCE(plane_comment_id, ''), COALESCE(sent_at, ''), created_at
 		         FROM outbox ORDER BY id ASC`
 	} else {
-		query = `SELECT id, COALESCE(client_id, ''), ticket_ref, payload_json, state, attempts, COALESCE(last_error, ''), COALESCE(target_workspace, ''), COALESCE(plane_comment_id, ''), COALESCE(sent_at, ''), created_at
+		query = `SELECT id, COALESCE(client_id, ''), ticket_ref, payload_json, COALESCE(mutation_type, ''), state, attempts, COALESCE(last_error, ''), COALESCE(target_workspace, ''), COALESCE(plane_comment_id, ''), COALESCE(sent_at, ''), created_at
 		         FROM outbox WHERE state IN ('pending', 'failed') ORDER BY id ASC`
 	}
 
@@ -928,7 +952,7 @@ func (s *Store) ListOutbox(ctx context.Context, includeAll bool) ([]issue.Outbox
 	for rows.Next() {
 		var r issue.OutboxRecord
 		var cr string
-		if err := rows.Scan(&r.ID, &r.ClientID, &r.TicketRef, &r.PayloadJSON, &r.State, &r.Attempts, &r.LastError, &r.TargetWorkspace, &r.PlaneCommentID, &r.SentAt, &cr); err != nil {
+		if err := rows.Scan(&r.ID, &r.ClientID, &r.TicketRef, &r.PayloadJSON, &r.MutationType, &r.State, &r.Attempts, &r.LastError, &r.TargetWorkspace, &r.PlaneCommentID, &r.SentAt, &cr); err != nil {
 			continue
 		}
 		r.CreatedAt, _ = time.Parse(time.RFC3339, cr)
@@ -954,6 +978,95 @@ func (s *Store) UpdateOutboxFailed(ctx context.Context, id int64, errMsg string)
 func (s *Store) DropOutboxItem(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM outbox WHERE id = ?`, id)
 	return err
+}
+
+// MigrateLocalIssue migra atómicamente un ticket local provisional al ticket canónico remoto en SQLite.
+func (s *Store) MigrateLocalIssue(ctx context.Context, oldID, oldKey string, newItem *issue.WorkItem) error {
+	if newItem == nil {
+		return fmt.Errorf("newItem no puede ser nil")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	oldKey = strings.TrimSpace(strings.ToUpper(oldKey))
+	oldID = strings.TrimSpace(oldID)
+
+	// 1. Eliminar el registro provisional de issues_cache si difiere del nuevo
+	if oldID != "" && oldID != newItem.ID {
+		_, _ = tx.ExecContext(ctx, `DELETE FROM issues_cache WHERE id = ?`, oldID)
+	}
+	if oldKey != "" && oldKey != strings.ToUpper(newItem.Key) {
+		_, _ = tx.ExecContext(ctx, `DELETE FROM issues_cache WHERE ticket_id = ?`, oldKey)
+	}
+
+	// 2. Insertar o actualizar la entidad canónica en issues_cache
+	nowUnix := float64(time.Now().Unix())
+	stateName := newItem.StateName
+	if stateName == "" {
+		stateName = "Backlog"
+	}
+	stateGroup := newItem.StateGroup
+	if stateGroup == "" {
+		stateGroup = string(newItem.State)
+		if stateGroup == "" {
+			stateGroup = "backlog"
+		}
+	}
+	priority := newItem.Priority
+	if priority == "" {
+		priority = "none"
+	}
+
+	assigneesJSON := "[]"
+	if len(newItem.Assignees) > 0 {
+		if b, err := json.Marshal(newItem.Assignees); err == nil {
+			assigneesJSON = string(b)
+		}
+	} else if newItem.Assignee != "" {
+		if strings.HasPrefix(newItem.Assignee, "[") {
+			assigneesJSON = newItem.Assignee
+		} else if b, err := json.Marshal([]string{newItem.Assignee}); err == nil {
+			assigneesJSON = string(b)
+		}
+	}
+
+	query := `INSERT INTO issues_cache(id, sequence_id, ticket_id, project_id, title, state_name, state_group, priority, labels_csv, assignees_json, updated_at)
+	          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	          ON CONFLICT(id) DO UPDATE SET
+	            sequence_id=excluded.sequence_id,
+	            ticket_id=excluded.ticket_id,
+	            project_id=excluded.project_id,
+	            title=excluded.title,
+	            state_name=excluded.state_name,
+	            state_group=excluded.state_group,
+	            priority=excluded.priority,
+	            labels_csv=excluded.labels_csv,
+	            assignees_json=excluded.assignees_json,
+	            updated_at=excluded.updated_at`
+
+	if _, err := tx.ExecContext(ctx, query, newItem.ID, newItem.SequenceID, newItem.Key, newItem.ProjectID, newItem.Title, stateName, stateGroup, priority, newItem.LabelsCSV, assigneesJSON, nowUnix); err != nil {
+		return err
+	}
+
+	// 3. Migrar referencias en tablas dependientes
+	if oldKey != "" || oldID != "" {
+		_, _ = tx.ExecContext(ctx, `DELETE FROM issue_snapshots WHERE ticket_id = ? OR issue_id = ?`, oldKey, oldID)
+		_, _ = tx.ExecContext(ctx, `UPDATE issue_links SET ticket_id = ?, issue_id = ? WHERE ticket_id = ? OR issue_id = ?`, newItem.Key, newItem.ID, oldKey, oldID)
+		_, _ = tx.ExecContext(ctx, `UPDATE issue_attachments SET ticket_id = ?, issue_id = ? WHERE ticket_id = ? OR issue_id = ?`, newItem.Key, newItem.ID, oldKey, oldID)
+		if oldKey != "" {
+			_, _ = tx.ExecContext(ctx, `UPDATE focus_sessions SET ticket_id = ? WHERE ticket_id = ?`, newItem.Key, oldKey)
+			_, _ = tx.ExecContext(ctx, `UPDATE worklogs SET ticket_id = ? WHERE ticket_id = ?`, newItem.Key, oldKey)
+			_, _ = tx.ExecContext(ctx, `UPDATE outbox SET ticket_ref = ? WHERE ticket_ref = ?`, newItem.Key, oldKey)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // GetTimeReport genera un resumen consolidado de horas y baldes de capacidad en un rango de fechas.

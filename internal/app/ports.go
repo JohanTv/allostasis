@@ -51,6 +51,7 @@ type IssueStore interface {
 	DropOutboxItem(ctx context.Context, id int64) error
 	UpdateOutboxSent(ctx context.Context, id int64, planeCommentID string) error
 	UpdateOutboxFailed(ctx context.Context, id int64, errMsg string) error
+	MigrateLocalIssue(ctx context.Context, oldID, oldKey string, newItem *issue.WorkItem) error
 
 	// Reportes
 	GetTimeReport(ctx context.Context, fromDate, toDate, track, workerType string) (*issue.TimeReport, error)

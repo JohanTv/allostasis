@@ -79,8 +79,17 @@ func (s *TrackerService) Create(ctx context.Context, input issue.CreateIssueInpu
 	// 1. Resolver projectID
 	var projectID string
 	pRec, err := s.store.GetProject(ctx, input.ProjectKey)
-	if err == nil && pRec != nil {
+	if err == nil && pRec != nil && pRec.ProjectID != "" {
 		projectID = pRec.ProjectID
+	} else if s.client != nil {
+		if projects, err := s.SyncProjects(ctx); err == nil {
+			for _, p := range projects {
+				if strings.EqualFold(p.Identifier, input.ProjectKey) {
+					projectID = p.ProjectID
+					break
+				}
+			}
+		}
 	}
 
 	// 2. Resolver stateID si se indicó StateName
@@ -107,9 +116,9 @@ func (s *TrackerService) Create(ctx context.Context, input issue.CreateIssueInpu
 	}
 
 	// 4. Si Plane está offline o falla, crear en local-first con cola outbox
-	nowUnix := time.Now().Unix()
-	localUUID := fmt.Sprintf("local-%d", nowUnix)
-	localKey := fmt.Sprintf("%s-LOCAL-%d", input.ProjectKey, nowUnix%10000)
+	nowNano := time.Now().UnixNano()
+	localUUID := fmt.Sprintf("local-%d", nowNano)
+	localKey := fmt.Sprintf("%s-LOCAL-%d", input.ProjectKey, (nowNano/1000)%100000)
 
 	localItem := &issue.WorkItem{
 		ID:          localUUID,
@@ -132,7 +141,7 @@ func (s *TrackerService) Create(ctx context.Context, input issue.CreateIssueInpu
 
 	// Encolar evento outbox para reconciliación diferida
 	payloadBytes, _ := json.Marshal(input)
-	_ = s.store.EnqueueOutbox(ctx, fmt.Sprintf("client-%d", nowUnix), localKey, string(payloadBytes), "")
+	_ = s.store.EnqueueOutbox(ctx, fmt.Sprintf("client-%d", nowNano), localKey, string(payloadBytes), "")
 
 	return localItem, nil
 }
@@ -339,6 +348,36 @@ func (s *TrackerService) Sync(ctx context.Context, projectKey string, allProject
 	return totalSynced, nil
 }
 
+// isCreateIssueMutation determina si un registro del outbox corresponde a la creación diferida de una tarea.
+func isCreateIssueMutation(item issue.OutboxRecord) bool {
+	if item.MutationType == "create_issue" {
+		return true
+	}
+	if item.MutationType == "comment" {
+		return false
+	}
+	// Si mutation_type no está explícito, verificar el payload JSON
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(item.PayloadJSON), &m); err == nil && m != nil {
+		if _, ok := m["comment_html"]; ok {
+			return false
+		}
+		if _, ok := m["comment"]; ok {
+			return false
+		}
+		if _, ok := m["body"]; ok {
+			return false
+		}
+		if _, ok := m["title"]; ok {
+			return true
+		}
+		if _, ok := m["name"]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // FlushOutbox publica los comentarios y registros diferidos en la cola outbox hacia el tracker remoto.
 func (s *TrackerService) FlushOutbox(ctx context.Context, limit int) (*issue.SyncReport, error) {
 	report := &issue.SyncReport{Status: "completed"}
@@ -359,6 +398,7 @@ func (s *TrackerService) FlushOutbox(ctx context.Context, limit int) (*issue.Syn
 		return nil, fmt.Errorf("error al consultar cola outbox: %w", err)
 	}
 
+	migratedKeys := make(map[string]*issue.WorkItem)
 	processed := 0
 	for _, item := range pending {
 		if processed >= limit {
@@ -366,8 +406,136 @@ func (s *TrackerService) FlushOutbox(ctx context.Context, limit int) (*issue.Syn
 		}
 		processed++
 
+		// Reasignar TicketRef si fue migrado en este lote
+		if migrated, ok := migratedKeys[item.TicketRef]; ok && migrated != nil {
+			item.TicketRef = migrated.Key
+		}
+
+		if isCreateIssueMutation(item) {
+			var input issue.CreateIssueInput
+			if err := json.Unmarshal([]byte(item.PayloadJSON), &input); err != nil {
+				report.FailedComments++
+				errMsg := fmt.Sprintf("error decodificando CreateIssueInput para %s: %s", item.TicketRef, err.Error())
+				report.Errors = append(report.Errors, errMsg)
+				_ = s.store.UpdateOutboxFailed(ctx, item.ID, errMsg)
+				continue
+			}
+
+			projectKey := strings.ToUpper(strings.TrimSpace(input.ProjectKey))
+			if projectKey == "" {
+				projectKey = "OMNIFY"
+				input.ProjectKey = projectKey
+			}
+
+			// 1. Resolver projectID
+			var projectID string
+			if pRec, err := s.store.GetProject(ctx, projectKey); err == nil && pRec != nil && pRec.ProjectID != "" {
+				projectID = pRec.ProjectID
+			} else {
+				if projects, err := s.SyncProjects(ctx); err == nil {
+					for _, p := range projects {
+						if strings.EqualFold(p.Identifier, projectKey) {
+							projectID = p.ProjectID
+							break
+						}
+					}
+				}
+			}
+
+			if projectID == "" {
+				report.FailedComments++
+				errMsg := fmt.Sprintf("no se pudo resolver projectID para proyecto %s (ticket %s)", projectKey, item.TicketRef)
+				report.Errors = append(report.Errors, errMsg)
+				_ = s.store.UpdateOutboxFailed(ctx, item.ID, errMsg)
+				continue
+			}
+
+			// 2. Resolver stateID si input.StateName existe
+			var stateID string
+			if input.StateName != "" {
+				if stRec, err := s.store.GetState(ctx, projectID, input.StateName); err == nil && stRec != nil && stRec.ID != "" {
+					stateID = stRec.ID
+				} else {
+					if states, err := s.SyncStates(ctx, projectID); err == nil {
+						for _, st := range states {
+							if strings.EqualFold(st.Name, input.StateName) {
+								stateID = st.ID
+								break
+							}
+						}
+					}
+				}
+			}
+
+			// 3. Crear remotamente en Plane CE
+			created, err := s.client.CreateIssueRemote(ctx, projectID, input, stateID)
+			if err != nil {
+				report.FailedComments++
+				report.Errors = append(report.Errors, err.Error())
+				_ = s.store.UpdateOutboxFailed(ctx, item.ID, err.Error())
+				continue
+			}
+
+			// 4. Migrar el ticket local en la base de datos
+			localItem, _ := s.store.GetIssue(ctx, item.TicketRef)
+			oldID := ""
+			oldKey := item.TicketRef
+			if localItem != nil {
+				oldID = localItem.ID
+				if oldKey == "" {
+					oldKey = localItem.Key
+				}
+				if created.StateName == "" {
+					created.StateName = localItem.StateName
+				}
+				if created.StateGroup == "" {
+					created.StateGroup = localItem.StateGroup
+					created.State = localItem.State
+				}
+				if created.Description == "" {
+					created.Description = localItem.Description
+				}
+				if created.Priority == "" {
+					created.Priority = localItem.Priority
+				}
+			}
+
+			if created.ProjectID == "" {
+				created.ProjectID = projectID
+			}
+			if created.ProjectKey == "" {
+				created.ProjectKey = projectKey
+			}
+
+			if err := s.store.MigrateLocalIssue(ctx, oldID, oldKey, created); err != nil {
+				_ = s.store.SaveIssue(ctx, created)
+			}
+
+			rawJSON, _ := json.Marshal(created)
+			_ = s.store.SaveIssueSnapshot(ctx, created.ID, created.Key, string(rawJSON))
+
+			// Registrar en mapeo de claves migradas para subsiguientes items del lote
+			if oldKey != "" {
+				migratedKeys[oldKey] = created
+			}
+			if oldID != "" {
+				migratedKeys[oldID] = created
+			}
+
+			_ = s.store.UpdateOutboxSent(ctx, item.ID, created.ID)
+			report.SyncedIssues++
+			continue
+		}
+
+		// Mutación de comentario
 		issueItem, err := s.store.GetIssue(ctx, item.TicketRef)
 		if err != nil || issueItem == nil || issueItem.ID == "" || issueItem.ProjectID == "" {
+			if migrated, ok := migratedKeys[item.TicketRef]; ok && migrated != nil {
+				issueItem = migrated
+			}
+		}
+
+		if issueItem == nil || issueItem.ID == "" || issueItem.ProjectID == "" {
 			report.FailedComments++
 			errMsg := fmt.Sprintf("no se encontró issue ID para %s", item.TicketRef)
 			report.Errors = append(report.Errors, errMsg)

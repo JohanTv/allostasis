@@ -81,6 +81,30 @@ func NewClient(cfg Config) *Client {
 	}
 }
 
+// parseSequenceID convierte de manera segura cualquier representación de sequence_id a entero.
+func parseSequenceID(v interface{}) int {
+	switch val := v.(type) {
+	case float64:
+		return int(val)
+	case float32:
+		return int(val)
+	case int:
+		return val
+	case int64:
+		return int(val)
+	case int32:
+		return int(val)
+	case string:
+		n, _ := strconv.Atoi(strings.TrimSpace(val))
+		return n
+	case json.Number:
+		n, _ := val.Int64()
+		return int(n)
+	default:
+		return 0
+	}
+}
+
 // Whoami valida la conectividad y las credenciales con Plane CE retornando datos del usuario actual.
 func (c *Client) Whoami(ctx context.Context) (*UserInfo, error) {
 	if c.cfg.APIKey == "" {
@@ -107,8 +131,13 @@ func (c *Client) Whoami(ctx context.Context) (*UserInfo, error) {
 		return nil, fmt.Errorf("Plane retornó HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error leyendo cuerpo de respuesta de usuario: %w", err)
+	}
+
 	var user UserInfo
-	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
+	if err := json.Unmarshal(bodyBytes, &user); err != nil {
 		return nil, fmt.Errorf("error decodificando respuesta de usuario: %w", err)
 	}
 	if user.Username == "" && user.DisplayName != "" {
@@ -140,16 +169,22 @@ func (c *Client) FetchProjects(ctx context.Context) ([]issue.ProjectRecord, erro
 		return nil, fmt.Errorf("Plane retornó HTTP %d al listar proyectos: %s", resp.StatusCode, string(body))
 	}
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error de lectura en flujo de proyectos: %w", err)
+	}
 	var rawProjects []map[string]interface{}
 
 	var wrapper struct {
 		Results []map[string]interface{} `json:"results"`
 	}
-	if err := json.Unmarshal(bodyBytes, &wrapper); err == nil && len(wrapper.Results) > 0 {
+	if err := json.Unmarshal(bodyBytes, &wrapper); err == nil {
 		rawProjects = wrapper.Results
-	} else {
-		_ = json.Unmarshal(bodyBytes, &rawProjects)
+	} else if err := json.Unmarshal(bodyBytes, &rawProjects); err != nil {
+		trimmed := bytes.TrimSpace(bodyBytes)
+		if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("{}")) && !bytes.Equal(trimmed, []byte("null")) {
+			return nil, fmt.Errorf("error decodificando proyectos de Plane (JSON corrupto): %w", err)
+		}
 	}
 
 	var records []issue.ProjectRecord
@@ -194,19 +229,28 @@ func (c *Client) FetchStates(ctx context.Context, projectID string) ([]issue.Sta
 		return nil, fmt.Errorf("Plane retornó HTTP %d al listar estados: %s", resp.StatusCode, string(body))
 	}
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error de lectura en flujo de estados: %w", err)
+	}
 	var rawStates []map[string]interface{}
 	var wrapper struct {
 		Results []map[string]interface{} `json:"results"`
 	}
-	if err := json.Unmarshal(bodyBytes, &wrapper); err == nil && len(wrapper.Results) > 0 {
+	if err := json.Unmarshal(bodyBytes, &wrapper); err == nil {
 		rawStates = wrapper.Results
-	} else {
-		_ = json.Unmarshal(bodyBytes, &rawStates)
+	} else if err := json.Unmarshal(bodyBytes, &rawStates); err != nil {
+		trimmed := bytes.TrimSpace(bodyBytes)
+		if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("{}")) && !bytes.Equal(trimmed, []byte("null")) {
+			return nil, fmt.Errorf("error decodificando estados de Plane (JSON corrupto): %w", err)
+		}
 	}
 
 	var records []issue.StateRecord
 	for _, s := range rawStates {
+		if s == nil {
+			continue
+		}
 		id, _ := s["id"].(string)
 		name, _ := s["name"].(string)
 		slug, _ := s["slug"].(string)
@@ -222,6 +266,9 @@ func (c *Client) FetchStates(ctx context.Context, projectID string) ([]issue.Sta
 			GroupName: group,
 		}
 		records = append(records, rec)
+	}
+	if records == nil {
+		records = make([]issue.StateRecord, 0)
 	}
 	return records, nil
 }
@@ -246,22 +293,32 @@ func (c *Client) FetchLabels(ctx context.Context, projectID string) ([]issue.Lab
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("error al obtener etiquetas de Plane (HTTP %d)", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("Plane retornó HTTP %d al listar etiquetas: %s", resp.StatusCode, string(body))
 	}
 
-	respBytes, _ := io.ReadAll(resp.Body)
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error de lectura en flujo de etiquetas: %w", err)
+	}
 	var rawLabels []map[string]interface{}
 	var wrapper struct {
 		Results []map[string]interface{} `json:"results"`
 	}
-	if err := json.Unmarshal(respBytes, &wrapper); err == nil && len(wrapper.Results) > 0 {
+	if err := json.Unmarshal(respBytes, &wrapper); err == nil {
 		rawLabels = wrapper.Results
-	} else {
-		_ = json.Unmarshal(respBytes, &rawLabels)
+	} else if err := json.Unmarshal(respBytes, &rawLabels); err != nil {
+		trimmed := bytes.TrimSpace(respBytes)
+		if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("{}")) && !bytes.Equal(trimmed, []byte("null")) {
+			return nil, fmt.Errorf("error decodificando etiquetas de Plane (JSON corrupto): %w", err)
+		}
 	}
 
 	var labels []issue.Label
 	for _, l := range rawLabels {
+		if l == nil {
+			continue
+		}
 		id, _ := l["id"].(string)
 		name, _ := l["name"].(string)
 		color, _ := l["color"].(string)
@@ -273,6 +330,9 @@ func (c *Client) FetchLabels(ctx context.Context, projectID string) ([]issue.Lab
 				Color:     color,
 			})
 		}
+	}
+	if labels == nil {
+		labels = make([]issue.Label, 0)
 	}
 	return labels, nil
 }
@@ -303,15 +363,21 @@ func (c *Client) FetchIssues(ctx context.Context, projectID, projectKey string, 
 		return nil, fmt.Errorf("Plane retornó HTTP %d al listar tareas: %s", resp.StatusCode, string(body))
 	}
 
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error de lectura en flujo de tareas: %w", err)
+	}
 	var rawIssues []map[string]interface{}
 	var wrapper struct {
 		Results []map[string]interface{} `json:"results"`
 	}
-	if err := json.Unmarshal(bodyBytes, &wrapper); err == nil && len(wrapper.Results) > 0 {
+	if err := json.Unmarshal(bodyBytes, &wrapper); err == nil {
 		rawIssues = wrapper.Results
-	} else {
-		_ = json.Unmarshal(bodyBytes, &rawIssues)
+	} else if err := json.Unmarshal(bodyBytes, &rawIssues); err != nil {
+		trimmed := bytes.TrimSpace(bodyBytes)
+		if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("{}")) && !bytes.Equal(trimmed, []byte("null")) {
+			return nil, fmt.Errorf("error decodificando tareas de Plane (JSON corrupto): %w", err)
+		}
 	}
 
 	stateMap := make(map[string]issue.StateRecord)
@@ -330,19 +396,25 @@ func (c *Client) FetchIssues(ctx context.Context, projectID, projectKey string, 
 
 	var snapshots []issue.IssueSnapshot
 	for _, it := range rawIssues {
+		if it == nil {
+			continue
+		}
 		id, _ := it["id"].(string)
 		name, _ := it["name"].(string)
-		seq, _ := it["sequence_id"].(float64)
+		seq := parseSequenceID(it["sequence_id"])
 		priority, _ := it["priority"].(string)
 		if priority == "" {
 			priority = "none"
 		}
 
-		ticketKey := fmt.Sprintf("%s-%d", projectKey, int(seq))
+		ticketKey := fmt.Sprintf("%s-%d", projectKey, seq)
+		if seq == 0 && id != "" {
+			ticketKey = fmt.Sprintf("%s-%s", projectKey, id)
+		}
 		stateName := "Backlog"
 		stateGroup := "backlog"
 
-		if stDetail, ok := it["state_detail"].(map[string]interface{}); ok {
+		if stDetail, ok := it["state_detail"].(map[string]interface{}); ok && stDetail != nil {
 			if sn, ok := stDetail["name"].(string); ok && sn != "" {
 				stateName = sn
 			}
@@ -354,6 +426,13 @@ func (c *Client) FetchIssues(ctx context.Context, projectID, projectKey string, 
 				stateName = st.Name
 				stateGroup = st.GroupName
 			}
+		} else if stMap, ok := it["state"].(map[string]interface{}); ok && stMap != nil {
+			if sn, ok := stMap["name"].(string); ok && sn != "" {
+				stateName = sn
+			}
+			if sg, ok := stMap["group"].(string); ok && sg != "" {
+				stateGroup = sg
+			}
 		}
 
 		item := issue.WorkItem{
@@ -361,7 +440,7 @@ func (c *Client) FetchIssues(ctx context.Context, projectID, projectKey string, 
 			Key:        ticketKey,
 			ProjectID:  projectID,
 			ProjectKey: projectKey,
-			SequenceID: int(seq),
+			SequenceID: seq,
 			Title:      name,
 			StateName:  stateName,
 			StateGroup: stateGroup,
@@ -370,11 +449,14 @@ func (c *Client) FetchIssues(ctx context.Context, projectID, projectKey string, 
 		}
 
 		var assigneeIDs []string
-		if assigneesArr, ok := it["assignees"].([]interface{}); ok {
+		if assigneesArr, ok := it["assignees"].([]interface{}); ok && assigneesArr != nil {
 			for _, a := range assigneesArr {
+				if a == nil {
+					continue
+				}
 				if aStr, ok := a.(string); ok && aStr != "" {
 					assigneeIDs = append(assigneeIDs, aStr)
-				} else if aMap, ok := a.(map[string]interface{}); ok {
+				} else if aMap, ok := a.(map[string]interface{}); ok && aMap != nil {
 					if aID, ok := aMap["id"].(string); ok && aID != "" {
 						assigneeIDs = append(assigneeIDs, aID)
 					}
@@ -386,17 +468,20 @@ func (c *Client) FetchIssues(ctx context.Context, projectID, projectKey string, 
 			item.Assignee = assigneeIDs[0]
 		}
 
-		if labelsArr, ok := it["labels"].([]interface{}); ok {
+		if labelsArr, ok := it["labels"].([]interface{}); ok && labelsArr != nil {
 			var labelNames []string
 			for _, l := range labelsArr {
-				if lStr, ok := l.(string); ok {
+				if l == nil {
+					continue
+				}
+				if lStr, ok := l.(string); ok && lStr != "" {
 					if lName, found := labelMap[lStr]; found {
 						labelNames = append(labelNames, lName)
 					} else {
 						labelNames = append(labelNames, lStr)
 					}
-				} else if lMap, ok := l.(map[string]interface{}); ok {
-					if ln, ok := lMap["name"].(string); ok {
+				} else if lMap, ok := l.(map[string]interface{}); ok && lMap != nil {
+					if ln, ok := lMap["name"].(string); ok && ln != "" {
 						labelNames = append(labelNames, ln)
 					}
 				}
@@ -410,6 +495,9 @@ func (c *Client) FetchIssues(ctx context.Context, projectID, projectKey string, 
 			Item:    item,
 			RawJSON: string(rawJSONBytes),
 		})
+	}
+	if snapshots == nil {
+		snapshots = make([]issue.IssueSnapshot, 0)
 	}
 
 	return snapshots, nil
@@ -439,12 +527,15 @@ func (c *Client) SendCommentRaw(ctx context.Context, targetWS, projectID, issueI
 	}
 	defer resp.Body.Close()
 
-	respBytes, _ := io.ReadAll(resp.Body)
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("error de red al recibir respuesta de Plane: %w", err)
+	}
 
 	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
 		var respPayload map[string]interface{}
 		commentID := ""
-		if json.Unmarshal(respBytes, &respPayload) == nil {
+		if json.Unmarshal(respBytes, &respPayload) == nil && respPayload != nil {
 			if cid, ok := respPayload["id"].(string); ok {
 				commentID = cid
 			}
@@ -490,7 +581,10 @@ func (c *Client) CreateIssueRemote(ctx context.Context, projectID string, input 
 	}
 	defer resp.Body.Close()
 
-	respBytes, _ := io.ReadAll(resp.Body)
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error de red al recibir respuesta de creación: %w", err)
+	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return nil, fmt.Errorf("Plane retornó HTTP %d al crear tarea: %s", resp.StatusCode, string(respBytes))
 	}
@@ -499,17 +593,23 @@ func (c *Client) CreateIssueRemote(ctx context.Context, projectID string, input 
 	if err := json.Unmarshal(respBytes, &created); err != nil {
 		return nil, fmt.Errorf("error decodificando tarea creada: %w", err)
 	}
+	if created == nil {
+		return nil, fmt.Errorf("respuesta vacía al crear tarea en Plane")
+	}
 
 	id, _ := created["id"].(string)
-	seq, _ := created["sequence_id"].(float64)
-	ticketKey := fmt.Sprintf("%s-%d", input.ProjectKey, int(seq))
+	seq := parseSequenceID(created["sequence_id"])
+	ticketKey := fmt.Sprintf("%s-%d", input.ProjectKey, seq)
+	if seq == 0 && id != "" {
+		ticketKey = fmt.Sprintf("%s-%s", input.ProjectKey, id)
+	}
 
 	return &issue.WorkItem{
 		ID:          id,
 		Key:         ticketKey,
 		ProjectID:   projectID,
 		ProjectKey:  input.ProjectKey,
-		SequenceID:  int(seq),
+		SequenceID:  seq,
 		Title:       input.Title,
 		Description: input.Description,
 		StateName:   input.StateName,

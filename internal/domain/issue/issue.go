@@ -192,6 +192,7 @@ type OutboxRecord struct {
 	ClientID        string    `json:"client_id"`
 	TicketRef       string    `json:"ticket_ref"`
 	PayloadJSON     string    `json:"payload_json"`
+	MutationType    string    `json:"mutation_type,omitempty"`
 	State           string    `json:"state"`
 	Attempts        int       `json:"attempts"`
 	LastError       string    `json:"last_error,omitempty"`
