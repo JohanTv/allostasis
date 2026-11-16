@@ -98,6 +98,7 @@ allostasis/
 │       ├── errors/             # Envelope JSON estructurado, categorías y códigos POSIX
 │       └── tui/                # Cockpit reactivo no bloqueante (Charm Bubble Tea)
 ├── docs/                       # 📚 Especificaciones, arquitectura y gobernanza
+│   ├── DEVELOPMENT.md          # Guía exhaustiva de ingeniería interna y adaptadores
 │   ├── ARCHITECTURE.md         # Especificación técnica canónica y principios SOLID
 │   ├── INDEX.md                # Índice maestro de Decisiones (ADRs) y RFCs
 │   ├── BACKLOG.md              # Backlog de ingeniería y mejoras diferidas
@@ -109,7 +110,7 @@ allostasis/
 └── Makefile                    # Compilación, tests con -race e instalación local
 ```
 
-Para directrices de contribución y desarrollo para agentes de IA, consulte [`AGENTS.md`](AGENTS.md). Para una inmersión detallada en los patrones de diseño y decisiones estructurales, consulte [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/INDEX.md`](docs/INDEX.md) y [`docs/BACKLOG.md`](docs/BACKLOG.md).
+Para directrices de contribución y salvaguardas para agentes de IA, consulte [`AGENTS.md`](AGENTS.md). Para la guía exhaustiva de ingeniería interna y desarrollo en Go, consulte [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md). Para una inmersión detallada en los patrones de diseño y decisiones estructurales, consulte [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/INDEX.md`](docs/INDEX.md) y [`docs/BACKLOG.md`](docs/BACKLOG.md).
 
 ---
 
