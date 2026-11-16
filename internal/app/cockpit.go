@@ -17,6 +17,13 @@ import (
 
 // DefaultDatabasePath determina la ubicación de la base SQLite (compatible con Plane cache).
 func DefaultDatabasePath() string {
+	if envPath := os.Getenv("ALLOSTASIS_DB_PATH"); envPath != "" {
+		return envPath
+	}
+	if envPath := os.Getenv("PLANE_DB_PATH"); envPath != "" {
+		return envPath
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "allostasis.db"

@@ -247,10 +247,10 @@ func TestCLI_TicketComment_And_GetFlags(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "worklogs.db")
 
 	runAlo := func(args ...string) ([]byte, error) {
-		cmdArgs := append([]string{"run", "./cmd/alo"}, args...)
+		cmdArgs := append([]string{"run", "./cmd/alo", "--db", dbPath}, args...)
 		cmd := exec.Command("go", cmdArgs...)
 		cmd.Dir = "../.."
-		cmd.Env = append(os.Environ(), "PLANE_DB_PATH="+dbPath, "PLANE_API_KEY=")
+		cmd.Env = append(os.Environ(), "PLANE_DB_PATH="+dbPath, "ALLOSTASIS_DB_PATH="+dbPath, "PLANE_API_KEY=")
 		return cmd.CombinedOutput()
 	}
 
@@ -357,10 +357,10 @@ func TestCLI_SyncUnified_GrammarAndTargets(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "worklogs.db")
 
 	runAlo := func(args ...string) ([]byte, error) {
-		cmdArgs := append([]string{"run", "./cmd/alo"}, args...)
+		cmdArgs := append([]string{"run", "./cmd/alo", "--db", dbPath}, args...)
 		cmd := exec.Command("go", cmdArgs...)
 		cmd.Dir = "../.."
-		cmd.Env = append(os.Environ(), "PLANE_DB_PATH="+dbPath, "PLANE_API_KEY=")
+		cmd.Env = append(os.Environ(), "PLANE_DB_PATH="+dbPath, "ALLOSTASIS_DB_PATH="+dbPath, "PLANE_API_KEY=")
 		return cmd.CombinedOutput()
 	}
 
@@ -412,10 +412,10 @@ func TestCLI_CommaSeparated_Flags(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "worklogs.db")
 
 	runAlo := func(args ...string) ([]byte, error) {
-		cmdArgs := append([]string{"run", "./cmd/alo"}, args...)
+		cmdArgs := append([]string{"run", "./cmd/alo", "--db", dbPath}, args...)
 		cmd := exec.Command("go", cmdArgs...)
 		cmd.Dir = "../.."
-		cmd.Env = append(os.Environ(), "PLANE_DB_PATH="+dbPath, "PLANE_API_KEY=")
+		cmd.Env = append(os.Environ(), "PLANE_DB_PATH="+dbPath, "ALLOSTASIS_DB_PATH="+dbPath, "PLANE_API_KEY=")
 		return cmd.CombinedOutput()
 	}
 
