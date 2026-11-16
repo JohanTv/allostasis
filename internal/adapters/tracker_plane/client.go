@@ -428,10 +428,14 @@ func (c *Client) FetchIssuesDelta(ctx context.Context, projectID, projectKey str
 
 	var snapshots []issue.IssueSnapshot
 	var newestUpdatedAt string
+	var cutoffTime *time.Time
+	if cutoffISO != "" {
+		cutoffTime = parseISOTime(cutoffISO)
+	}
 	cursor := ""
 	page := 0
 	maxPages := 50
-	if !deep && cutoffISO == "" && limit <= 100 {
+	if !deep && (cutoffISO == "" || cutoffTime == nil) && limit <= 100 {
 		maxPages = 1
 	}
 
@@ -572,24 +576,24 @@ func (c *Client) FetchIssuesDelta(ctx context.Context, projectID, projectKey str
 
 			upStr, _ := it["updated_at"].(string)
 			if upStr != "" {
-				if t, err := time.Parse(time.RFC3339, upStr); err == nil {
-					item.RemoteUpdatedAt = &t
-				}
+				item.RemoteUpdatedAt = parseISOTime(upStr)
 				if newestUpdatedAt == "" {
 					newestUpdatedAt = upStr
 				}
 			}
 			if crStr, ok := it["created_at"].(string); ok && crStr != "" {
-				if t, err := time.Parse(time.RFC3339, crStr); err == nil {
-					item.CreatedAt = t
+				if t := parseISOTime(crStr); t != nil {
+					item.CreatedAt = *t
 				}
 			}
 
 			// Parada temprana (Early Termination): si no es sincronización profunda (--deep)
-			// y encontramos un ticket con updated_at <= cutoffISO, hemos alcanzado la marca de agua.
-			if !deep && cutoffISO != "" && upStr != "" && upStr <= cutoffISO {
-				earlyStop = true
-				break
+			// y encontramos un ticket con updated_at <= cutoffISO (solo si cutoffISO es una fecha temporal válida).
+			if !deep && cutoffTime != nil && item.RemoteUpdatedAt != nil {
+				if !item.RemoteUpdatedAt.After(*cutoffTime) {
+					earlyStop = true
+					break
+				}
 			}
 
 			if labelsArr, ok := it["labels"].([]interface{}); ok && labelsArr != nil {
