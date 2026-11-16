@@ -22,12 +22,22 @@ func newTicketCmd() *cobra.Command {
 	var ticketLimitFlag int
 	var ticketTextFlag string
 	var ticketAllProjectsFlag, ticketBriefFlag, ticketMineFlag, ticketOpenFlag, ticketCreatedFlag, ticketInvolvedFlag bool
+	var ticketRefreshFlag, ticketOfflineFlag, ticketVerboseFlag bool
 
 	// 1. ticket list
 	ticketListCmd := &cobra.Command{
 		Use:   "list",
 		Short: "Lista tareas registradas en la base de datos local",
 		Run: func(cmd *cobra.Command, args []string) {
+			if ticketRefreshFlag && ticketOfflineFlag {
+				errors.EmitErrorWithDetail(fmt.Errorf("no puedes combinar --refresh y --offline"), errors.ErrorDetail{
+					Code:        "MUTUALLY_EXCLUSIVE_FLAGS",
+					Category:    errors.CategoryUserInput,
+					Hint:        "--refresh requiere red para sincronizar; --offline garantiza no tocarla",
+					Recoverable: true,
+				}, errors.ExitUsageError, jsonFlag)
+			}
+
 			svc, store, err := initTrackerService()
 			if err != nil {
 				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
@@ -46,6 +56,10 @@ func newTicketCmd() *cobra.Command {
 			targetProject := ticketProjectFlag
 			if ticketAllProjectsFlag {
 				targetProject = ""
+			}
+
+			if ticketRefreshFlag {
+				_, _ = svc.Sync(ctx, targetProject, ticketAllProjectsFlag)
 			}
 
 			if ticketTextFlag != "" {
@@ -119,6 +133,13 @@ func newTicketCmd() *cobra.Command {
 				return
 			}
 
+			if ticketBriefFlag {
+				for _, it := range items {
+					fmt.Printf("%-14s %s\n", it.Key, it.Title)
+				}
+				return
+			}
+
 			if len(items) == 0 {
 				fmt.Println("No se encontraron tareas.")
 				return
@@ -133,6 +154,14 @@ func newTicketCmd() *cobra.Command {
 				}
 				fmt.Printf("%-14s %-12s %-8s %s\n", it.Key, st, it.Priority, it.Title)
 			}
+
+			if ticketVerboseFlag {
+				projMsg := targetProject
+				if projMsg == "" {
+					projMsg = "todos"
+				}
+				fmt.Printf("\n[info] Total: %d tareas | Proyecto: %s | Abiertas: %t\n", len(items), projMsg, ticketOpenFlag)
+			}
 		},
 	}
 	ticketListCmd.Flags().StringVarP(&ticketProjectFlag, "project", "p", "", "Filtrar por proyecto (ej. OMNIFY, OPS)")
@@ -145,6 +174,9 @@ func newTicketCmd() *cobra.Command {
 	ticketListCmd.Flags().BoolVar(&ticketCreatedFlag, "created", false, "Solo tareas creadas por ti")
 	ticketListCmd.Flags().BoolVar(&ticketInvolvedFlag, "involved", false, "Tareas asignadas, creadas o con actividad tuya")
 	ticketListCmd.Flags().BoolVar(&ticketOpenFlag, "open", false, "Solo tareas abiertas")
+	ticketListCmd.Flags().BoolVar(&ticketRefreshFlag, "refresh", false, "Forzar sincronización remota antes de listar")
+	ticketListCmd.Flags().BoolVar(&ticketOfflineFlag, "offline", false, "Garantizar no realizar llamadas remotas")
+	ticketListCmd.Flags().BoolVar(&ticketVerboseFlag, "verbose", false, "Incluir notas informativas y cobertura")
 
 	// 2. ticket search
 	ticketSearchCmd := &cobra.Command{
@@ -801,7 +833,75 @@ func newTicketCmd() *cobra.Command {
 		},
 	}
 
-	ticketCmd.AddCommand(ticketListCmd, ticketSearchCmd, ticketGetCmd, ticketCreateCmd, ticketUpdateCmd, ticketSyncCmd, ticketWhoamiCmd, ticketLabelsCmd, ticketDeleteCmd, ticketLinkCmd, ticketFocusCmd, ticketProjectsCmd)
+	// 13. ticket states
+	var ticketStatesProjectFlag string
+	var ticketStatesRefreshFlag bool
+	ticketStatesCmd := &cobra.Command{
+		Use:     "states",
+		Aliases: []string{"st"},
+		Short:   "Listar los estados de workflow por proyecto",
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+
+			states, err := svc.States(ctx, ticketStatesProjectFlag, ticketStatesRefreshFlag)
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "STATES_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if states == nil {
+				states = make([]issue.StateRecord, 0)
+			}
+
+			if jsonFlag {
+				payload := map[string]interface{}{
+					"count":   len(states),
+					"results": states,
+					"schema":  "allostasis/1",
+					"view":    "states",
+				}
+				errors.EmitSuccess(payload, true)
+				return
+			}
+
+			if len(states) == 0 {
+				fmt.Println("No se encontraron estados registrados. Ejecuta 'alo ticket sync' o usa '--refresh'.")
+				return
+			}
+
+			fmt.Printf("%-10s %-12s %-22s %-18s %s\n", "PROYECTO", "GRUPO", "ESTADO", "SLUG", "ID")
+			fmt.Println(strings.Repeat("─", 88))
+			for _, st := range states {
+				proj := st.ProjectKey
+				if proj == "" {
+					proj = st.ProjectID
+				}
+				defMark := ""
+				if st.IsDefault {
+					defMark = " *"
+				}
+				fmt.Printf("%-10s %-12s %-22s %-18s %s\n", proj, st.GroupName, st.Name+defMark, st.Slug, st.ID)
+			}
+		},
+	}
+	ticketStatesCmd.Flags().StringVarP(&ticketStatesProjectFlag, "project", "p", "", "Filtrar por proyecto (ej. OMNIFY, OPS)")
+	ticketStatesCmd.Flags().BoolVar(&ticketStatesRefreshFlag, "refresh", false, "Refrescar estados desde Plane CE")
+
+	ticketCmd.AddCommand(ticketListCmd, ticketSearchCmd, ticketGetCmd, ticketCreateCmd, ticketUpdateCmd, ticketSyncCmd, ticketWhoamiCmd, ticketLabelsCmd, ticketDeleteCmd, ticketLinkCmd, ticketFocusCmd, ticketProjectsCmd, ticketStatesCmd)
 
 	return ticketCmd
 }

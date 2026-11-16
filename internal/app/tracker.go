@@ -669,6 +669,44 @@ func (s *TrackerService) Projects(ctx context.Context) ([]issue.ProjectRecord, e
 	return s.store.ListProjects(ctx)
 }
 
+// States retorna los estados locales, sincronizándolos con Plane si se solicita refresh o si la caché está vacía.
+func (s *TrackerService) States(ctx context.Context, projectKey string, refresh bool) ([]issue.StateRecord, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("almacén local no inicializado")
+	}
+
+	var projectID string
+	if projectKey != "" {
+		if p, err := s.store.GetProject(ctx, strings.ToUpper(projectKey)); err == nil && p != nil {
+			projectID = p.ProjectID
+		} else {
+			projectID = projectKey
+		}
+	}
+
+	states, err := s.store.ListStates(ctx, projectKey)
+	if err != nil {
+		return nil, err
+	}
+
+	if (refresh || len(states) == 0) && s.client != nil {
+		if projectID != "" {
+			if _, err := s.SyncStates(ctx, projectID); err == nil {
+				states, _ = s.store.ListStates(ctx, projectKey)
+			}
+		} else {
+			if projs, err := s.Projects(ctx); err == nil {
+				for _, p := range projs {
+					_, _ = s.SyncStates(ctx, p.ProjectID)
+				}
+				states, _ = s.store.ListStates(ctx, "")
+			}
+		}
+	}
+
+	return states, nil
+}
+
 // Labels retorna las etiquetas locales, sincronizándolas con Plane si se solicita refresh.
 func (s *TrackerService) Labels(ctx context.Context, projectKey string, refresh bool) ([]issue.Label, error) {
 	var projectID string

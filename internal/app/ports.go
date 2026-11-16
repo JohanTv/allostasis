@@ -25,6 +25,7 @@ type IssueStore interface {
 
 	// Estados
 	GetState(ctx context.Context, projectID, name string) (*issue.StateRecord, error)
+	ListStates(ctx context.Context, projectID string) ([]issue.StateRecord, error)
 	SaveState(ctx context.Context, st issue.StateRecord) error
 
 	// Etiquetas

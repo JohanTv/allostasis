@@ -183,11 +183,13 @@ type ProjectRecord struct {
 
 // StateRecord modela un estado de ticket por proyecto.
 type StateRecord struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"project_id"`
-	Name      string `json:"name"`
-	Slug      string `json:"slug"`
-	GroupName string `json:"group_name"`
+	ID         string `json:"id"`
+	ProjectID  string `json:"project_id"`
+	ProjectKey string `json:"project_key,omitempty"`
+	Name       string `json:"name"`
+	Slug       string `json:"slug"`
+	GroupName  string `json:"group_name"`
+	IsDefault  bool   `json:"is_default,omitempty"`
 }
 
 // OutboxRecord representa una fila en la tabla outbox de despacho.

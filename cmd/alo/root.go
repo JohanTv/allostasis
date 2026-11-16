@@ -12,6 +12,7 @@ import (
 	"github.com/allostasis/alo/internal/adapters/tracker_plane"
 	"github.com/allostasis/alo/internal/app"
 	"github.com/allostasis/alo/internal/domain/clock"
+	"github.com/allostasis/alo/internal/domain/issue"
 	"github.com/allostasis/alo/internal/presentation/errors"
 	"github.com/allostasis/alo/internal/presentation/tui"
 	"github.com/spf13/cobra"
@@ -146,7 +147,78 @@ y aísla tus ramas multi-repo mediante Git worktrees transaccionales.`,
 	cmd.AddCommand(newWorkspaceCmd())
 	cmd.AddCommand(newTicketCmd())
 	cmd.AddCommand(newProjectsCmd())
+	cmd.AddCommand(newStatesCmd())
 
+	return cmd
+}
+
+func newStatesCmd() *cobra.Command {
+	var statesProjectFlag string
+	var statesRefreshFlag bool
+	cmd := &cobra.Command{
+		Use:     "states",
+		Aliases: []string{"st"},
+		Short:   "Listar los estados de workflow por proyecto",
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+
+			states, err := svc.States(ctx, statesProjectFlag, statesRefreshFlag)
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "STATES_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if states == nil {
+				states = make([]issue.StateRecord, 0)
+			}
+
+			if jsonFlag {
+				payload := map[string]interface{}{
+					"count":   len(states),
+					"results": states,
+					"schema":  "allostasis/1",
+					"view":    "states",
+				}
+				errors.EmitSuccess(payload, true)
+				return
+			}
+
+			if len(states) == 0 {
+				fmt.Println("No se encontraron estados registrados. Ejecuta 'alo ticket sync' o usa '--refresh'.")
+				return
+			}
+
+			fmt.Printf("%-10s %-12s %-22s %-18s %s\n", "PROYECTO", "GRUPO", "ESTADO", "SLUG", "ID")
+			fmt.Println(strings.Repeat("─", 88))
+			for _, st := range states {
+				proj := st.ProjectKey
+				if proj == "" {
+					proj = st.ProjectID
+				}
+				defMark := ""
+				if st.IsDefault {
+					defMark = " *"
+				}
+				fmt.Printf("%-10s %-12s %-22s %-18s %s\n", proj, st.GroupName, st.Name+defMark, st.Slug, st.ID)
+			}
+		},
+	}
+	cmd.Flags().StringVarP(&statesProjectFlag, "project", "p", "", "Filtrar por proyecto (ej. OMNIFY, OPS)")
+	cmd.Flags().BoolVar(&statesRefreshFlag, "refresh", false, "Refrescar estados desde Plane CE")
 	return cmd
 }
 

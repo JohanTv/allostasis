@@ -274,12 +274,14 @@ func (c *Client) FetchStates(ctx context.Context, projectID string) ([]issue.Sta
 		if id == "" || name == "" {
 			continue
 		}
+		isDef, _ := s["default"].(bool)
 		rec := issue.StateRecord{
 			ID:        id,
 			ProjectID: projectID,
 			Name:      name,
 			Slug:      slug,
 			GroupName: group,
+			IsDefault: isDef,
 		}
 		records = append(records, rec)
 	}

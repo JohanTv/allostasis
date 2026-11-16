@@ -167,3 +167,59 @@ func TestCLI_ProjectsJSONContract(t *testing.T) {
 		t.Errorf("se esperaba envelope.OK = true")
 	}
 }
+
+func TestCLI_StatesJSONContract(t *testing.T) {
+	cmd := exec.Command("go", "run", "./cmd/alo", "states", "--json")
+	cmd.Dir = "../.."
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("error ejecutando alo states --json: %v (output: %s)", err, string(out))
+	}
+
+	var envelope struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Count   int                      `json:"count"`
+			Results []map[string]interface{} `json:"results"`
+			View    string                   `json:"view"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &envelope); err != nil {
+		t.Fatalf("la salida no es un JSON válido: %v (raw: %s)", err, string(out))
+	}
+	if !envelope.OK {
+		t.Errorf("se esperaba envelope.OK = true")
+	}
+	if envelope.Data.View != "states" {
+		t.Errorf("se esperaba view 'states', obtenido '%s'", envelope.Data.View)
+	}
+}
+
+func TestCLI_TicketList_RefreshOfflineExclusion(t *testing.T) {
+	cmd := exec.Command("go", "run", "./cmd/alo", "ticket", "list", "--refresh", "--offline", "--json")
+	cmd.Dir = "../.."
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		t.Fatalf("se esperaba fallo al combinar --refresh y --offline, pero comando tuvo éxito")
+	}
+
+	var envelope struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code     string `json:"code"`
+			Category string `json:"category"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("salida de error debe ser JSON válido: %v (raw: %s, stderr: %s)", err, stdout.String(), stderr.String())
+	}
+	if envelope.OK {
+		t.Errorf("se esperaba envelope.OK = false")
+	}
+	if envelope.Error.Code != "MUTUALLY_EXCLUSIVE_FLAGS" {
+		t.Errorf("código de error esperado 'MUTUALLY_EXCLUSIVE_FLAGS', obtenido '%s'", envelope.Error.Code)
+	}
+}

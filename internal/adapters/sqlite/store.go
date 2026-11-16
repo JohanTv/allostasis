@@ -590,29 +590,100 @@ func (s *Store) GetProject(ctx context.Context, identifier string) (*ProjectReco
 // SaveState almacena la definición de un estado por proyecto.
 func (s *Store) SaveState(ctx context.Context, st StateRecord) error {
 	nowUnix := float64(time.Now().Unix())
-	query := `INSERT INTO states(id, project_id, name, slug, group_name, updated_at)
-	          VALUES(?, ?, ?, ?, ?, ?)
+	defInt := 0
+	if st.IsDefault {
+		defInt = 1
+	}
+	query := `INSERT INTO states(id, project_id, name, slug, group_name, is_default, updated_at)
+	          VALUES(?, ?, ?, ?, ?, ?, ?)
 	          ON CONFLICT(id) DO UPDATE SET
 	            project_id=excluded.project_id,
 	            name=excluded.name,
 	            slug=excluded.slug,
 	            group_name=excluded.group_name,
+	            is_default=excluded.is_default,
 	            updated_at=excluded.updated_at`
-	_, err := s.db.ExecContext(ctx, query, st.ID, st.ProjectID, st.Name, st.Slug, st.GroupName, nowUnix)
+	_, err := s.db.ExecContext(ctx, query, st.ID, st.ProjectID, st.Name, st.Slug, st.GroupName, defInt, nowUnix)
 	return err
+}
+
+// ListStates obtiene los estados del catálogo local, filtrando por ID o identificador de proyecto si se indica.
+func (s *Store) ListStates(ctx context.Context, projectID string) ([]issue.StateRecord, error) {
+	var query string
+	var rows *sql.Rows
+	var err error
+
+	projectID = strings.TrimSpace(projectID)
+	if projectID != "" {
+		query = `SELECT s.id, s.project_id, COALESCE(p.identifier, s.project_id) AS project_key, s.name, s.slug, s.group_name, s.is_default
+		         FROM states s
+		         LEFT JOIN projects p ON s.project_id = p.project_id
+		         WHERE s.project_id = ? OR LOWER(p.identifier) = LOWER(?)
+		         ORDER BY 
+		             project_key ASC,
+		             CASE LOWER(s.group_name)
+		                 WHEN 'backlog' THEN 1
+		                 WHEN 'unstarted' THEN 2
+		                 WHEN 'started' THEN 3
+		                 WHEN 'completed' THEN 4
+		                 WHEN 'cancelled' THEN 5
+		                 ELSE 6
+		             END,
+		             s.name ASC`
+		rows, err = s.reader.QueryContext(ctx, query, projectID, projectID)
+	} else {
+		query = `SELECT s.id, s.project_id, COALESCE(p.identifier, s.project_id) AS project_key, s.name, s.slug, s.group_name, s.is_default
+		         FROM states s
+		         LEFT JOIN projects p ON s.project_id = p.project_id
+		         ORDER BY 
+		             project_key ASC,
+		             CASE LOWER(s.group_name)
+		                 WHEN 'backlog' THEN 1
+		                 WHEN 'unstarted' THEN 2
+		                 WHEN 'started' THEN 3
+		                 WHEN 'completed' THEN 4
+		                 WHEN 'cancelled' THEN 5
+		                 ELSE 6
+		             END,
+		             s.name ASC`
+		rows, err = s.reader.QueryContext(ctx, query)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := make([]issue.StateRecord, 0)
+	for rows.Next() {
+		var st issue.StateRecord
+		var defInt int
+		if err := rows.Scan(&st.ID, &st.ProjectID, &st.ProjectKey, &st.Name, &st.Slug, &st.GroupName, &defInt); err != nil {
+			return nil, err
+		}
+		st.IsDefault = (defInt == 1)
+		list = append(list, st)
+	}
+	return list, nil
 }
 
 // GetState busca un estado por su nombre en un proyecto específico.
 func (s *Store) GetState(ctx context.Context, projectID, name string) (*StateRecord, error) {
 	var st StateRecord
-	err := s.reader.QueryRowContext(ctx, `SELECT id, project_id, name, slug, group_name FROM states WHERE project_id = ? AND (LOWER(name) = LOWER(?) OR LOWER(slug) = LOWER(?))`, projectID, name, name).
-		Scan(&st.ID, &st.ProjectID, &st.Name, &st.Slug, &st.GroupName)
+	var defInt int
+	err := s.reader.QueryRowContext(ctx, `SELECT s.id, s.project_id, COALESCE(p.identifier, s.project_id) AS project_key, s.name, s.slug, s.group_name, s.is_default 
+	                                      FROM states s 
+	                                      LEFT JOIN projects p ON s.project_id = p.project_id
+	                                      WHERE (s.project_id = ? OR LOWER(p.identifier) = LOWER(?)) 
+	                                        AND (LOWER(s.name) = LOWER(?) OR LOWER(s.slug) = LOWER(?))`, 
+	                                      projectID, projectID, name, name).
+		Scan(&st.ID, &st.ProjectID, &st.ProjectKey, &st.Name, &st.Slug, &st.GroupName, &defInt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("estado '%s' no encontrado para el proyecto", name)
 		}
 		return nil, err
 	}
+	st.IsDefault = (defInt == 1)
 	return &st, nil
 }
 

@@ -229,4 +229,35 @@ func TestStore_InMemoryIntegration(t *testing.T) {
 	if cachedProfile == nil || cachedProfile.ID != "usr-johan" {
 		t.Errorf("perfil recuperado inválido: %+v", cachedProfile)
 	}
+
+	// 4. Probar ListStates ordenado por workflow lifecycle
+	stBacklog := sqlite.StateRecord{ID: "st-backlog", ProjectID: "proj-omnify", Name: "Backlog", Slug: "backlog", GroupName: "backlog"}
+	stRevision := sqlite.StateRecord{ID: "st-rev", ProjectID: "proj-omnify", Name: "Revisión", Slug: "revision", GroupName: "started"}
+	stCompleted := sqlite.StateRecord{ID: "st-comp", ProjectID: "proj-omnify", Name: "Completado", Slug: "completado", GroupName: "completed", IsDefault: true}
+	stCancelled := sqlite.StateRecord{ID: "st-canc", ProjectID: "proj-omnify", Name: "Cancelado", Slug: "cancelado", GroupName: "cancelled"}
+
+	_ = store.SaveState(ctx, stBacklog)
+	_ = store.SaveState(ctx, stRevision)
+	_ = store.SaveState(ctx, stCompleted)
+	_ = store.SaveState(ctx, stCancelled)
+
+	statesLoaded, err := store.ListStates(ctx, "OMNIFY")
+	if err != nil {
+		t.Fatalf("error ListStates: %v", err)
+	}
+	if len(statesLoaded) != 5 {
+		t.Fatalf("se esperaban 5 estados para OMNIFY, obtenidos: %d", len(statesLoaded))
+	}
+	if statesLoaded[0].GroupName != "backlog" || statesLoaded[1].GroupName != "started" {
+		t.Errorf("orden inesperado de estados: %+v", statesLoaded)
+	}
+	var foundRevision bool
+	for _, s := range statesLoaded {
+		if s.Name == "Revisión" && s.GroupName == "started" {
+			foundRevision = true
+		}
+	}
+	if !foundRevision {
+		t.Errorf("estado 'Revisión' no encontrado o grupo incorrecto")
+	}
 }
