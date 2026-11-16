@@ -62,6 +62,7 @@ type IssueFilter struct {
 	State      string
 	StateGroup string
 	Assignee   string
+	OpenOnly   bool
 	Query      string
 	Limit      int
 	Offset     int
@@ -202,11 +203,12 @@ type OutboxRecord struct {
 
 // UserInfo modela los metadatos del usuario devueltos por el tracker remoto.
 type UserInfo struct {
-	ID        string `json:"id"`
-	Email     string `json:"email"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	Username  string `json:"username"`
+	ID          string `json:"id"`
+	Email       string `json:"email"`
+	FirstName   string `json:"first_name"`
+	LastName    string `json:"last_name"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
 }
 
 // SyncReport resume las operaciones ejecutadas durante el ciclo de sincronización.

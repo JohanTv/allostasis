@@ -136,4 +136,48 @@ func TestStore_InMemoryIntegration(t *testing.T) {
 	if err != nil || stLoaded.GroupName != "started" {
 		t.Fatalf("error recuperando estado: %v", err)
 	}
+
+	// 6. Probar ListIssuesFiltered con OpenOnly y Assignee
+	itemCompleted := &issue.WorkItem{
+		ID:         "uuid-completed",
+		Key:        "OMNIFY-101",
+		ProjectID:  "proj-omnify",
+		Title:      "Tarea completada",
+		StateName:  "Completado",
+		StateGroup: "completed",
+		Priority:   "low",
+		Assignees:  []string{"usr-other"},
+	}
+	itemActive := &issue.WorkItem{
+		ID:         "uuid-active",
+		Key:        "OMNIFY-102",
+		ProjectID:  "proj-omnify",
+		Title:      "Tarea en progreso",
+		StateName:  "Progreso",
+		StateGroup: "started",
+		Priority:   "urgent",
+		Assignees:  []string{"usr-johan", "usr-team"},
+	}
+	_ = store.SaveIssue(ctx, itemCompleted)
+	_ = store.SaveIssue(ctx, itemActive)
+
+	// Filtrar solo abiertos
+	openItems, err := store.ListIssuesFiltered(ctx, issue.IssueFilter{ProjectKey: "OMNIFY", OpenOnly: true})
+	if err != nil {
+		t.Fatalf("error ListIssuesFiltered OpenOnly: %v", err)
+	}
+	for _, it := range openItems {
+		if it.Key == "OMNIFY-101" {
+			t.Errorf("ListIssuesFiltered OpenOnly no debió incluir tarea completada OMNIFY-101")
+		}
+	}
+
+	// Filtrar por Assignee
+	myItems, err := store.ListIssuesFiltered(ctx, issue.IssueFilter{ProjectKey: "OMNIFY", Assignee: "usr-johan"})
+	if err != nil {
+		t.Fatalf("error ListIssuesFiltered Assignee: %v", err)
+	}
+	if len(myItems) != 1 || myItems[0].Key != "OMNIFY-102" {
+		t.Errorf("se esperaba 1 tarea para usr-johan (OMNIFY-102), obtenidos: %+v", myItems)
+	}
 }

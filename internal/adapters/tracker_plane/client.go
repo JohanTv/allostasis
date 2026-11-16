@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,11 +47,18 @@ func LoadConfigFromEnv() Config {
 		workspace = "teamprogra"
 	}
 
+	timeoutSec := 45
+	if envTimeout := os.Getenv("PLANE_TIMEOUT"); envTimeout != "" {
+		if t, err := strconv.Atoi(envTimeout); err == nil && t > 0 {
+			timeoutSec = t
+		}
+	}
+
 	return Config{
 		BaseURL:   baseURL,
 		APIKey:    apiKey,
 		Workspace: workspace,
-		Timeout:   15 * time.Second,
+		Timeout:   time.Duration(timeoutSec) * time.Second,
 	}
 }
 
@@ -102,6 +110,9 @@ func (c *Client) Whoami(ctx context.Context) (*UserInfo, error) {
 	var user UserInfo
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
 		return nil, fmt.Errorf("error decodificando respuesta de usuario: %w", err)
+	}
+	if user.Username == "" && user.DisplayName != "" {
+		user.Username = user.DisplayName
 	}
 	return &user, nil
 }
@@ -221,7 +232,7 @@ func (c *Client) FetchLabels(ctx context.Context, projectID string) ([]issue.Lab
 		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
 	}
 
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issue-labels/", c.cfg.BaseURL, c.cfg.Workspace, projectID)
+	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/labels/", c.cfg.BaseURL, c.cfg.Workspace, projectID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -238,12 +249,19 @@ func (c *Client) FetchLabels(ctx context.Context, projectID string) ([]issue.Lab
 		return nil, fmt.Errorf("error al obtener etiquetas de Plane (HTTP %d)", resp.StatusCode)
 	}
 
-	var res []map[string]interface{}
 	respBytes, _ := io.ReadAll(resp.Body)
-	_ = json.Unmarshal(respBytes, &res)
+	var rawLabels []map[string]interface{}
+	var wrapper struct {
+		Results []map[string]interface{} `json:"results"`
+	}
+	if err := json.Unmarshal(respBytes, &wrapper); err == nil && len(wrapper.Results) > 0 {
+		rawLabels = wrapper.Results
+	} else {
+		_ = json.Unmarshal(respBytes, &rawLabels)
+	}
 
 	var labels []issue.Label
-	for _, l := range res {
+	for _, l := range rawLabels {
 		id, _ := l["id"].(string)
 		name, _ := l["name"].(string)
 		color, _ := l["color"].(string)
@@ -296,6 +314,20 @@ func (c *Client) FetchIssues(ctx context.Context, projectID, projectKey string, 
 		_ = json.Unmarshal(bodyBytes, &rawIssues)
 	}
 
+	stateMap := make(map[string]issue.StateRecord)
+	if states, err := c.FetchStates(ctx, projectID); err == nil {
+		for _, st := range states {
+			stateMap[st.ID] = st
+		}
+	}
+
+	labelMap := make(map[string]string)
+	if labels, err := c.FetchLabels(ctx, projectID); err == nil {
+		for _, l := range labels {
+			labelMap[l.ID] = l.Name
+		}
+	}
+
 	var snapshots []issue.IssueSnapshot
 	for _, it := range rawIssues {
 		id, _ := it["id"].(string)
@@ -317,6 +349,11 @@ func (c *Client) FetchIssues(ctx context.Context, projectID, projectKey string, 
 			if sg, ok := stDetail["group"].(string); ok && sg != "" {
 				stateGroup = sg
 			}
+		} else if sID, ok := it["state"].(string); ok && sID != "" {
+			if st, found := stateMap[sID]; found {
+				stateName = st.Name
+				stateGroup = st.GroupName
+			}
 		}
 
 		item := issue.WorkItem{
@@ -332,11 +369,32 @@ func (c *Client) FetchIssues(ctx context.Context, projectID, projectKey string, 
 			Priority:   priority,
 		}
 
+		var assigneeIDs []string
+		if assigneesArr, ok := it["assignees"].([]interface{}); ok {
+			for _, a := range assigneesArr {
+				if aStr, ok := a.(string); ok && aStr != "" {
+					assigneeIDs = append(assigneeIDs, aStr)
+				} else if aMap, ok := a.(map[string]interface{}); ok {
+					if aID, ok := aMap["id"].(string); ok && aID != "" {
+						assigneeIDs = append(assigneeIDs, aID)
+					}
+				}
+			}
+		}
+		item.Assignees = assigneeIDs
+		if len(assigneeIDs) > 0 {
+			item.Assignee = assigneeIDs[0]
+		}
+
 		if labelsArr, ok := it["labels"].([]interface{}); ok {
 			var labelNames []string
 			for _, l := range labelsArr {
 				if lStr, ok := l.(string); ok {
-					labelNames = append(labelNames, lStr)
+					if lName, found := labelMap[lStr]; found {
+						labelNames = append(labelNames, lName)
+					} else {
+						labelNames = append(labelNames, lStr)
+					}
 				} else if lMap, ok := l.(map[string]interface{}); ok {
 					if ln, ok := lMap["name"].(string); ok {
 						labelNames = append(labelNames, ln)
@@ -595,7 +653,14 @@ func (c *Client) ListLinksRemote(ctx context.Context, projectID, issueID string)
 
 	var res []map[string]interface{}
 	respBytes, _ := io.ReadAll(resp.Body)
-	_ = json.Unmarshal(respBytes, &res)
+	var wrapper struct {
+		Results []map[string]interface{} `json:"results"`
+	}
+	if err := json.Unmarshal(respBytes, &wrapper); err == nil && len(wrapper.Results) > 0 {
+		res = wrapper.Results
+	} else {
+		_ = json.Unmarshal(respBytes, &res)
+	}
 
 	list := make([]issue.Link, 0)
 	for _, item := range res {

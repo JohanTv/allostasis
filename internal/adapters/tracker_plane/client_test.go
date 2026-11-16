@@ -54,7 +54,7 @@ func TestClient_TrackerOperations(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/api/v1/users/me/":
-			_, _ = w.Write([]byte(`{"id":"usr-1","email":"johan@example.com","first_name":"Johan","last_name":"Tv","username":"johantv"}`))
+			_, _ = w.Write([]byte(`{"id":"usr-1","email":"johan@example.com","first_name":"Johan","last_name":"Tv","display_name":"johantv"}`))
 
 		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/":
 			_, _ = w.Write([]byte(`{"results":[{"id":"proj-omnify","identifier":"OMNIFY","name":"Omnify Platform"}]}`))
@@ -63,7 +63,10 @@ func TestClient_TrackerOperations(t *testing.T) {
 			_, _ = w.Write([]byte(`{"results":[{"id":"st-prog","name":"Progreso","slug":"progreso","group":"started"}]}`))
 
 		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/proj-omnify/issues/" && r.Method == http.MethodGet:
-			_, _ = w.Write([]byte(`{"results":[{"id":"iss-1","sequence_id":269,"name":"[FEAT] Canal de atención Facebook Messenger e Instagram DM","priority":"high","state_detail":{"name":"Backlog","group":"backlog"},"labels":["backend","feat"]}]}`))
+			_, _ = w.Write([]byte(`{"results":[
+				{"id":"iss-1","sequence_id":269,"name":"[FEAT] Canal de atención Facebook Messenger e Instagram DM","priority":"high","state_detail":{"name":"Backlog","group":"backlog"},"labels":["backend","feat"]},
+				{"id":"iss-2","sequence_id":270,"name":"[FEAT] Segundo canal","priority":"medium","state":"st-prog","assignees":["usr-1"],"labels":["frontend"]}
+			]}`))
 
 		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/proj-omnify/issues/" && r.Method == http.MethodPost:
 			w.WriteHeader(http.StatusCreated)
@@ -73,15 +76,15 @@ func TestClient_TrackerOperations(t *testing.T) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"id":"iss-1","name":"Actualizado"}`))
 
-		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/proj-omnify/issue-labels/":
-			_, _ = w.Write([]byte(`[{"id":"lbl-1","name":"backend","color":"#ff0000"}]`))
+		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/proj-omnify/labels/":
+			_, _ = w.Write([]byte(`{"results":[{"id":"lbl-1","name":"backend","color":"#ff0000"}]}`))
 
 		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/proj-omnify/issues/iss-1/links/":
 			if r.Method == http.MethodPost {
 				w.WriteHeader(http.StatusCreated)
 				_, _ = w.Write([]byte(`{"id":"lnk-1","title":"PR 10","url":"https://github.com/org/repo/pull/10"}`))
 			} else {
-				_, _ = w.Write([]byte(`[{"id":"lnk-1","title":"PR 10","url":"https://github.com/org/repo/pull/10"}]`))
+				_, _ = w.Write([]byte(`{"results":[{"id":"lnk-1","title":"PR 10","url":"https://github.com/org/repo/pull/10"}]}`))
 			}
 
 		default:
@@ -131,8 +134,14 @@ func TestClient_TrackerOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchIssues falló: %v", err)
 	}
-	if len(issues) != 1 || issues[0].Item.Key != "OMNIFY-269" {
+	if len(issues) != 2 || issues[0].Item.Key != "OMNIFY-269" {
 		t.Errorf("issues inesperados: %+v", issues)
+	}
+	if issues[1].Item.StateName != "Progreso" || issues[1].Item.StateGroup != "started" {
+		t.Errorf("estado resuelto inesperado para iss-2: %s (%s)", issues[1].Item.StateName, issues[1].Item.StateGroup)
+	}
+	if len(issues[1].Item.Assignees) != 1 || issues[1].Item.Assignees[0] != "usr-1" {
+		t.Errorf("assignees inesperados: %+v", issues[1].Item.Assignees)
 	}
 
 	// 5. CreateIssueRemote

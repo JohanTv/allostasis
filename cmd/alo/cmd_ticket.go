@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/allostasis/alo/internal/domain/issue"
@@ -55,9 +56,14 @@ func newTicketCmd() *cobra.Command {
 					ProjectKey: targetProject,
 					State:      ticketStateFlag,
 					Limit:      ticketLimitFlag,
+					OpenOnly:   ticketOpenFlag,
 				}
-				if ticketOpenFlag {
-					filter.StateGroup = "started"
+				if ticketMineFlag {
+					if actorUUID := os.Getenv("PLANE_ACTOR_UUID"); actorUUID != "" {
+						filter.Assignee = actorUUID
+					} else if user, whoErr := svc.Whoami(ctx); whoErr == nil && user != nil && user.ID != "" {
+						filter.Assignee = user.ID
+					}
 				}
 				items, err = svc.List(ctx, filter)
 			}

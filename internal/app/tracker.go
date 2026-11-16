@@ -273,16 +273,34 @@ func (s *TrackerService) SyncIssues(ctx context.Context, projectKey string, limi
 		return 0, fmt.Errorf("proyecto %s no encontrado en Plane", projectKey)
 	}
 
-	_, _ = s.SyncStates(ctx, projectID)
+	states, _ := s.SyncStates(ctx, projectID)
+	_, _ = s.SyncLabels(ctx, projectID)
 
 	snapshots, err := s.client.FetchIssues(ctx, projectID, projectKey, limit)
 	if err != nil {
 		return 0, err
 	}
 
+	stateMap := make(map[string]issue.StateRecord)
+	for _, st := range states {
+		stateMap[st.ID] = st
+	}
+
 	syncedCount := 0
 	if s.store != nil {
 		for _, snap := range snapshots {
+			if (snap.Item.StateName == "" || snap.Item.StateName == "Backlog") && snap.RawJSON != "" {
+				var raw map[string]interface{}
+				if err := json.Unmarshal([]byte(snap.RawJSON), &raw); err == nil {
+					if sID, ok := raw["state"].(string); ok && sID != "" {
+						if st, found := stateMap[sID]; found {
+							snap.Item.StateName = st.Name
+							snap.Item.StateGroup = st.GroupName
+							snap.Item.State = issue.State(st.GroupName)
+						}
+					}
+				}
+			}
 			if err := s.store.SaveIssue(ctx, &snap.Item); err == nil {
 				_ = s.store.SaveIssueSnapshot(ctx, snap.Item.ID, snap.Item.Key, snap.RawJSON)
 				syncedCount++
@@ -390,6 +408,10 @@ func (s *TrackerService) Labels(ctx context.Context, projectKey string, refresh 
 	var projectID string
 	if projectKey != "" {
 		if p, err := s.store.GetProject(ctx, strings.ToUpper(projectKey)); err == nil && p != nil {
+			projectID = p.ProjectID
+		}
+	} else {
+		if p, err := s.store.GetProject(ctx, "OMNIFY"); err == nil && p != nil {
 			projectID = p.ProjectID
 		}
 	}

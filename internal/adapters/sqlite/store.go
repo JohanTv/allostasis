@@ -245,7 +245,8 @@ func (s *Store) GetIssue(ctx context.Context, key string) (*issue.WorkItem, erro
 
 	var item issue.WorkItem
 	var stateStr string
-	err := row.Scan(&item.ID, &item.Key, &item.ProjectID, &item.Title, &item.StateName, &stateStr, &item.Priority, &item.Assignee)
+	var assigneesJSONStr string
+	err := row.Scan(&item.ID, &item.Key, &item.ProjectID, &item.Title, &item.StateName, &stateStr, &item.Priority, &assigneesJSONStr)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("tarea no encontrada: %s", key)
@@ -254,6 +255,15 @@ func (s *Store) GetIssue(ctx context.Context, key string) (*issue.WorkItem, erro
 	}
 	item.State = issue.State(stateStr)
 	item.StateGroup = stateStr
+	var assignees []string
+	if err := json.Unmarshal([]byte(assigneesJSONStr), &assignees); err == nil {
+		item.Assignees = assignees
+		if len(assignees) > 0 {
+			item.Assignee = assignees[0]
+		}
+	} else {
+		item.Assignee = assigneesJSONStr
+	}
 
 	// Enriquecer con descripción desde issue_snapshots si existe
 	var snapshotJSON sql.NullString
@@ -299,11 +309,21 @@ func (s *Store) ListIssues(ctx context.Context, state issue.State) ([]issue.Work
 	for rows.Next() {
 		var item issue.WorkItem
 		var stateStr string
-		if err := rows.Scan(&item.ID, &item.Key, &item.ProjectID, &item.Title, &item.StateName, &stateStr, &item.Priority, &item.Assignee); err != nil {
+		var assigneesJSONStr string
+		if err := rows.Scan(&item.ID, &item.Key, &item.ProjectID, &item.Title, &item.StateName, &stateStr, &item.Priority, &assigneesJSONStr); err != nil {
 			return nil, err
 		}
 		item.State = issue.State(stateStr)
 		item.StateGroup = stateStr
+		var assignees []string
+		if err := json.Unmarshal([]byte(assigneesJSONStr), &assignees); err == nil {
+			item.Assignees = assignees
+			if len(assignees) > 0 {
+				item.Assignee = assignees[0]
+			}
+		} else {
+			item.Assignee = assigneesJSONStr
+		}
 		list = append(list, item)
 	}
 	return list, nil
@@ -331,6 +351,13 @@ func (s *Store) ListIssuesFiltered(ctx context.Context, filter issue.IssueFilter
 		q += ` AND state_group = ?`
 		args = append(args, filter.StateGroup)
 	}
+	if filter.OpenOnly {
+		q += ` AND state_group NOT IN ('completed', 'cancelled')`
+	}
+	if filter.Assignee != "" {
+		q += ` AND assignees_json LIKE ?`
+		args = append(args, "%"+filter.Assignee+"%")
+	}
 	if filter.Query != "" {
 		likePattern := "%" + filter.Query + "%"
 		q += ` AND (title LIKE ? OR ticket_id LIKE ?)`
@@ -350,11 +377,21 @@ func (s *Store) ListIssuesFiltered(ctx context.Context, filter issue.IssueFilter
 	for rows.Next() {
 		var item issue.WorkItem
 		var stateStr string
-		if err := rows.Scan(&item.ID, &item.Key, &item.ProjectID, &item.Title, &item.StateName, &stateStr, &item.Priority, &item.Assignee); err != nil {
+		var assigneesJSONStr string
+		if err := rows.Scan(&item.ID, &item.Key, &item.ProjectID, &item.Title, &item.StateName, &stateStr, &item.Priority, &assigneesJSONStr); err != nil {
 			return nil, err
 		}
 		item.State = issue.State(stateStr)
 		item.StateGroup = stateStr
+		var assignees []string
+		if err := json.Unmarshal([]byte(assigneesJSONStr), &assignees); err == nil {
+			item.Assignees = assignees
+			if len(assignees) > 0 {
+				item.Assignee = assignees[0]
+			}
+		} else {
+			item.Assignee = assigneesJSONStr
+		}
 		list = append(list, item)
 	}
 	return list, nil
@@ -542,7 +579,20 @@ func (s *Store) SaveIssue(ctx context.Context, item *issue.WorkItem) error {
 		priority = "none"
 	}
 
-	_, err := s.db.ExecContext(ctx, query, item.ID, item.SequenceID, item.Key, item.ProjectID, item.Title, stateName, stateGroup, priority, item.LabelsCSV, item.Assignee, nowUnix)
+	assigneesJSON := "[]"
+	if len(item.Assignees) > 0 {
+		if b, err := json.Marshal(item.Assignees); err == nil {
+			assigneesJSON = string(b)
+		}
+	} else if item.Assignee != "" {
+		if strings.HasPrefix(item.Assignee, "[") {
+			assigneesJSON = item.Assignee
+		} else if b, err := json.Marshal([]string{item.Assignee}); err == nil {
+			assigneesJSON = string(b)
+		}
+	}
+
+	_, err := s.db.ExecContext(ctx, query, item.ID, item.SequenceID, item.Key, item.ProjectID, item.Title, stateName, stateGroup, priority, item.LabelsCSV, assigneesJSON, nowUnix)
 	return err
 }
 
