@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	ticketRefRegex   = regexp.MustCompile(`^(?:[A-Za-z0-9_]+-\d+|[0-9a-fA-F-]{36})$`)
+	ticketRefRegex   = regexp.MustCompile(`^(?:[A-Za-z0-9_]+-(?:LOCAL-)?\d+|[0-9a-fA-F-]{36}|local-\d+)$`)
 	worklogMetaRegex = regexp.MustCompile(`<!--\s*PLANE_WORKLOG_METADATA\s*([\s\S]*?)\s*-->`)
 	sessionRegex     = regexp.MustCompile(`\*\*Sesión\*\*\s*\|\s*(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})`)
 )
