@@ -406,3 +406,94 @@ func TestCLI_SyncUnified_GrammarAndTargets(t *testing.T) {
 		t.Errorf("resultado tickets inesperado: %+v", ticketsRep)
 	}
 }
+
+func TestCLI_CommaSeparated_Flags(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "worklogs.db")
+
+	runAlo := func(args ...string) ([]byte, error) {
+		cmdArgs := append([]string{"run", "./cmd/alo"}, args...)
+		cmd := exec.Command("go", cmdArgs...)
+		cmd.Dir = "../.."
+		cmd.Env = append(os.Environ(), "PLANE_DB_PATH="+dbPath, "PLANE_API_KEY=")
+		return cmd.CombinedOutput()
+	}
+
+	// 1. Crear tarea con múltiples etiquetas separadas por comas (--labels "backend,auth,p0")
+	out, err := runAlo("ticket", "create", "Tarea con múltiples etiquetas", "--project", "PRJA", "--labels", "backend,auth,p0", "--json")
+	if err != nil {
+		t.Fatalf("error creando tarea con --labels: %v (out: %s)", err, string(out))
+	}
+	var createdEnv struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Key    string   `json:"key"`
+			Labels []string `json:"labels"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &createdEnv); err != nil || createdEnv.Data.Key == "" {
+		t.Fatalf("error parseando creación: %v (out: %s)", err, string(out))
+	}
+	ticketKeyA := createdEnv.Data.Key
+	if len(createdEnv.Data.Labels) != 3 {
+		t.Errorf("esperadas 3 etiquetas, obtenidas: %+v", createdEnv.Data.Labels)
+	}
+
+	// 2. Crear segunda tarea en otro proyecto
+	out, err = runAlo("ticket", "create", "Tarea en segundo proyecto", "--project", "PRJB", "--state", "Pendiente", "--json")
+	if err != nil {
+		t.Fatalf("error creando tarea PRJB: %v (out: %s)", err, string(out))
+	}
+
+	// 3. Consultar con ticket get --include "comments,history"
+	out, err = runAlo("ticket", "get", ticketKeyA, "--include", "comments,history", "--json")
+	if err != nil {
+		t.Fatalf("error ejecutando ticket get --include: %v (out: %s)", err, string(out))
+	}
+	var getEnv struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Item     issue.WorkItem        `json:"item"`
+			Comments []issue.CommentRecord `json:"comments"`
+			History  *issue.TicketHistory  `json:"history"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &getEnv); err != nil || getEnv.Data.Item.Key != ticketKeyA {
+		t.Fatalf("error parseando ticket get con --include: %v (out: %s)", err, string(out))
+	}
+	if getEnv.Data.Comments == nil || getEnv.Data.History == nil {
+		t.Errorf("se esperaba que --include habilitara comments e history: comments=%v, history=%v", getEnv.Data.Comments, getEnv.Data.History)
+	}
+
+	// 4. Filtrar múltiples proyectos con -p "PRJA,PRJB"
+	out, err = runAlo("ticket", "list", "-p", "PRJA,PRJB", "--json")
+	if err != nil {
+		t.Fatalf("error en ticket list con múltiples proyectos: %v (out: %s)", err, string(out))
+	}
+	var listMultiProj struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Count   int              `json:"count"`
+			Results []issue.WorkItem `json:"results"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &listMultiProj); err != nil || len(listMultiProj.Data.Results) < 2 {
+		t.Errorf("se esperaban al menos 2 tareas de PRJA y PRJB, obtenidas %d: %+v", len(listMultiProj.Data.Results), listMultiProj)
+	}
+
+	// 5. Filtrar múltiples estados con -s "Pendiente,Backlog"
+	out, err = runAlo("ticket", "list", "-s", "Pendiente,Backlog", "--json")
+	if err != nil {
+		t.Fatalf("error en ticket list con múltiples estados: %v (out: %s)", err, string(out))
+	}
+	var listMultiState struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Count   int              `json:"count"`
+			Results []issue.WorkItem `json:"results"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &listMultiState); err != nil || len(listMultiState.Data.Results) < 2 {
+		t.Errorf("se esperaban al menos 2 tareas con estados Pendiente o Backlog, obtenidas: %d", len(listMultiState.Data.Results))
+	}
+}

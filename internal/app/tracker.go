@@ -142,6 +142,8 @@ func (s *TrackerService) Create(ctx context.Context, input issue.CreateIssueInpu
 		StateGroup:  stateGroup,
 		State:       issue.State(stateGroup),
 		Priority:    input.Priority,
+		Labels:      input.Labels,
+		LabelsCSV:   strings.Join(input.Labels, ","),
 		StartDate:   input.StartDate,
 		TargetDate:  input.TargetDate,
 		CreatedAt:   time.Now(),
@@ -584,28 +586,35 @@ func (s *TrackerService) SyncUnified(ctx context.Context, opts issue.SyncUnified
 	if target == "all" || target == "tickets" || target == "issues" {
 		var targetProjects []issue.ProjectRecord
 		if opts.ProjectKey != "" {
-			targetKey := strings.ToUpper(strings.TrimSpace(opts.ProjectKey))
-			var pID string
-			if s.store != nil {
-				if pRec, err := s.store.GetProject(ctx, targetKey); err == nil && pRec != nil && pRec.ProjectID != "" {
-					pID = pRec.ProjectID
+			var requestedKeys []string
+			for _, k := range strings.Split(opts.ProjectKey, ",") {
+				if t := strings.ToUpper(strings.TrimSpace(k)); t != "" {
+					requestedKeys = append(requestedKeys, t)
 				}
 			}
-			if pID == "" {
-				if len(projects) == 0 {
-					projects, _ = s.SyncProjects(ctx)
-				}
-				for _, p := range projects {
-					if p.Identifier == targetKey {
-						pID = p.ProjectID
-						break
+			for _, targetKey := range requestedKeys {
+				var pID string
+				if s.store != nil {
+					if pRec, err := s.store.GetProject(ctx, targetKey); err == nil && pRec != nil && pRec.ProjectID != "" {
+						pID = pRec.ProjectID
 					}
 				}
-			}
-			if pID != "" {
-				targetProjects = append(targetProjects, issue.ProjectRecord{Identifier: targetKey, ProjectID: pID})
-			} else {
-				report.Errors = append(report.Errors, fmt.Sprintf("proyecto %s no encontrado", targetKey))
+				if pID == "" {
+					if len(projects) == 0 {
+						projects, _ = s.SyncProjects(ctx)
+					}
+					for _, p := range projects {
+						if p.Identifier == targetKey {
+							pID = p.ProjectID
+							break
+						}
+					}
+				}
+				if pID != "" {
+					targetProjects = append(targetProjects, issue.ProjectRecord{Identifier: targetKey, ProjectID: pID})
+				} else {
+					report.Errors = append(report.Errors, fmt.Sprintf("proyecto %s no encontrado", targetKey))
+				}
 			}
 		} else if opts.AllProjects {
 			if len(projects) == 0 {

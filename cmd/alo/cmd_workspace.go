@@ -107,6 +107,16 @@ func newWorkspaceCmd() *cobra.Command {
 				slug = strings.ToLower(ticketID)
 			}
 
+			var expandedRepos []string
+			for _, token := range repoTokens {
+				for _, part := range strings.Split(token, ",") {
+					if trimmed := strings.TrimSpace(part); trimmed != "" {
+						expandedRepos = append(expandedRepos, trimmed)
+					}
+				}
+			}
+			repoTokens = expandedRepos
+
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()

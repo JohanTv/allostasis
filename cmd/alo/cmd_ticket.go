@@ -241,6 +241,7 @@ func newTicketCmd() *cobra.Command {
 	var getLastFlag int
 	var getHistoryFlag bool
 	var getOfflineFlag bool
+	var getIncludeFlag string
 	ticketGetCmd := &cobra.Command{
 		Use:   "get <TICKET-ID>",
 		Short: "Obtiene el detalle completo de una tarea",
@@ -258,6 +259,19 @@ func newTicketCmd() *cobra.Command {
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
+			}
+
+			if getIncludeFlag != "" {
+				for _, inc := range strings.Split(getIncludeFlag, ",") {
+					switch strings.TrimSpace(strings.ToLower(inc)) {
+					case "history":
+						getHistoryFlag = true
+					case "comments":
+						if getLastFlag == 0 {
+							getLastFlag = 10
+						}
+					}
+				}
 			}
 
 			item, err := svc.Get(ctx, args[0])
@@ -378,10 +392,11 @@ func newTicketCmd() *cobra.Command {
 	ticketGetCmd.Flags().IntVar(&getLastFlag, "last", 0, "Mostrar los últimos N comentarios")
 	ticketGetCmd.Flags().BoolVar(&getHistoryFlag, "history", false, "Mostrar historial de asignaciones y sesiones de esfuerzo")
 	ticketGetCmd.Flags().BoolVar(&getOfflineFlag, "offline", false, "Consultar únicamente desde la caché local sin llamadas a la red")
+	ticketGetCmd.Flags().StringVar(&getIncludeFlag, "include", "", "Secciones a incluir separadas por comas (ej. comments,history)")
 
 	// 4. ticket create
 	var createProjectFlag, createPriorityFlag, createStateFlag, createDescFlag string
-	var createStartDateFlag, createTargetDateFlag string
+	var createStartDateFlag, createTargetDateFlag, createLabelsFlag string
 	ticketCreateCmd := &cobra.Command{
 		Use:   "create <título>",
 		Short: "Crea una nueva tarea (en Plane CE o local si está offline)",
@@ -401,12 +416,22 @@ func newTicketCmd() *cobra.Command {
 				ctx = context.Background()
 			}
 
+			var labels []string
+			if createLabelsFlag != "" {
+				for _, l := range strings.Split(createLabelsFlag, ",") {
+					if trimmed := strings.TrimSpace(l); trimmed != "" {
+						labels = append(labels, trimmed)
+					}
+				}
+			}
+
 			created, err := svc.Create(ctx, issue.CreateIssueInput{
 				ProjectKey:  createProjectFlag,
 				Title:       args[0],
 				Description: createDescFlag,
 				Priority:    createPriorityFlag,
 				StateName:   createStateFlag,
+				Labels:      labels,
 				StartDate:   createStartDateFlag,
 				TargetDate:  createTargetDateFlag,
 			})
@@ -432,6 +457,7 @@ func newTicketCmd() *cobra.Command {
 	ticketCreateCmd.Flags().StringVar(&createStartDateFlag, "start-date", "", "Fecha de inicio planificada (YYYY-MM-DD)")
 	ticketCreateCmd.Flags().StringVar(&createTargetDateFlag, "due-date", "", "Fecha límite / de entrega (YYYY-MM-DD)")
 	ticketCreateCmd.Flags().StringVar(&createTargetDateFlag, "target-date", "", "Alias de --due-date (YYYY-MM-DD)")
+	ticketCreateCmd.Flags().StringVar(&createLabelsFlag, "labels", "", "Etiquetas separadas por comas (ej. backend,p0,auth)")
 
 	// 5. ticket update
 	var updateStateFlag, updatePriorityFlag, updateTitleFlag string

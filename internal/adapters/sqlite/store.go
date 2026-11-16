@@ -453,13 +453,42 @@ func (s *Store) ListIssuesFiltered(ctx context.Context, filter issue.IssueFilter
 	var args []interface{}
 
 	if filter.ProjectKey != "" {
-		pKey := strings.ToUpper(strings.TrimSpace(filter.ProjectKey))
-		q += ` AND (project_id = ? OR ticket_id LIKE ?)`
-		args = append(args, pKey, pKey+"-%")
+		var pKeys []string
+		for _, p := range strings.Split(filter.ProjectKey, ",") {
+			if trimmed := strings.ToUpper(strings.TrimSpace(p)); trimmed != "" {
+				pKeys = append(pKeys, trimmed)
+			}
+		}
+		if len(pKeys) == 1 {
+			q += ` AND (project_id = ? OR ticket_id LIKE ?)`
+			args = append(args, pKeys[0], pKeys[0]+"-%")
+		} else if len(pKeys) > 1 {
+			var clauses []string
+			for _, pKey := range pKeys {
+				clauses = append(clauses, `(project_id = ? OR ticket_id LIKE ?)`)
+				args = append(args, pKey, pKey+"-%")
+			}
+			q += fmt.Sprintf(` AND (%s)`, strings.Join(clauses, " OR "))
+		}
 	}
 	if filter.State != "" {
-		q += ` AND (state_name = ? OR state_group = ?)`
-		args = append(args, filter.State, filter.State)
+		var states []string
+		for _, s := range strings.Split(filter.State, ",") {
+			if trimmed := strings.TrimSpace(s); trimmed != "" {
+				states = append(states, trimmed)
+			}
+		}
+		if len(states) == 1 {
+			q += ` AND (state_name = ? OR state_group = ?)`
+			args = append(args, states[0], states[0])
+		} else if len(states) > 1 {
+			var clauses []string
+			for _, st := range states {
+				clauses = append(clauses, `(state_name = ? OR state_group = ?)`)
+				args = append(args, st, st)
+			}
+			q += fmt.Sprintf(` AND (%s)`, strings.Join(clauses, " OR "))
+		}
 	}
 	if filter.StateGroup != "" {
 		q += ` AND state_group = ?`
@@ -533,9 +562,23 @@ func (s *Store) SearchIssues(ctx context.Context, query string, project string, 
 	args := []interface{}{likePattern, likePattern, likePattern, likePattern}
 
 	if project != "" {
-		pKey := strings.ToUpper(strings.TrimSpace(project))
-		q += ` AND (c.project_id = ? OR c.ticket_id LIKE ?)`
-		args = append(args, pKey, pKey+"-%")
+		var pKeys []string
+		for _, p := range strings.Split(project, ",") {
+			if trimmed := strings.ToUpper(strings.TrimSpace(p)); trimmed != "" {
+				pKeys = append(pKeys, trimmed)
+			}
+		}
+		if len(pKeys) == 1 {
+			q += ` AND (c.project_id = ? OR c.ticket_id LIKE ?)`
+			args = append(args, pKeys[0], pKeys[0]+"-%")
+		} else if len(pKeys) > 1 {
+			var clauses []string
+			for _, pKey := range pKeys {
+				clauses = append(clauses, `(c.project_id = ? OR c.ticket_id LIKE ?)`)
+				args = append(args, pKey, pKey+"-%")
+			}
+			q += fmt.Sprintf(` AND (%s)`, strings.Join(clauses, " OR "))
+		}
 	}
 
 	q += ` ORDER BY c.updated_at DESC LIMIT ?`

@@ -709,6 +709,9 @@ func (c *Client) CreateIssueRemote(ctx context.Context, projectID string, input 
 	if input.TargetDate != "" {
 		payloadMap["target_date"] = input.TargetDate
 	}
+	if len(input.Labels) > 0 {
+		payloadMap["labels"] = input.Labels
+	}
 
 	payloadBytes, _ := json.Marshal(payloadMap)
 	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issues/", c.cfg.BaseURL, c.cfg.Workspace, projectID)
@@ -771,6 +774,8 @@ func (c *Client) CreateIssueRemote(ctx context.Context, projectID string, input 
 		Description:     input.Description,
 		StateName:       input.StateName,
 		Priority:        input.Priority,
+		Labels:          input.Labels,
+		LabelsCSV:       strings.Join(input.Labels, ","),
 		StartDate:       input.StartDate,
 		TargetDate:      input.TargetDate,
 		CreatedBy:       createdBy,
