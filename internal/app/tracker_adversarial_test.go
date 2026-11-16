@@ -3,8 +3,10 @@ package app_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -544,5 +546,704 @@ func TestAdversarial_TrackerService_Concurrency_Stress(t *testing.T) {
 	t.Logf("Prueba de estrés concurrente completada. Errores totales capturados: %d", atomic.LoadInt64(&errorCount))
 	if errorCount > 0 {
 		t.Errorf("Se presentaron %d errores durante la ejecución concurrente bajo -race", errorCount)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SUITE ADVERSARIAL: CONCURRENCIA, RESILIENCIA Y CAOS EN SYNC
+// ---------------------------------------------------------------------------
+
+// mockChaosTrackerClient modela un backend de Plane CE con inyección controlada de caos:
+// latencias asíncronas con jitter, fallos HTTP 500/503 simulados, caídas de socket y rastreo
+// de llamadas y goroutines en vuelo para verificar ausencia de leaks.
+type mockChaosTrackerClient struct {
+	*mockAdversarialTrackerClient
+	mu            sync.RWMutex
+	projects      []issue.ProjectRecord
+	states        map[string][]issue.StateRecord
+	labels        map[string][]issue.Label
+	issues        map[string][]issue.IssueSnapshot
+	failProjects  map[string]error // projectKey o projectID -> error inducido
+	failFetchProj error
+	minLatency    time.Duration
+	maxLatency    time.Duration
+	activeCalls   int64
+	totalCalls    int64
+	jitterCounter int64
+}
+
+func newMockChaosTrackerClient() *mockChaosTrackerClient {
+	return &mockChaosTrackerClient{
+		mockAdversarialTrackerClient: newMockAdversarialClient(true),
+		states:                       make(map[string][]issue.StateRecord),
+		labels:                       make(map[string][]issue.Label),
+		issues:                       make(map[string][]issue.IssueSnapshot),
+		failProjects:                 make(map[string]error),
+	}
+}
+
+func (m *mockChaosTrackerClient) SetLatency(min, max time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.minLatency = min
+	m.maxLatency = max
+}
+
+func (m *mockChaosTrackerClient) SetProjectFailure(keyOrID string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.failProjects[keyOrID] = err
+}
+
+func (m *mockChaosTrackerClient) delay(ctx context.Context) error {
+	m.mu.RLock()
+	minL := m.minLatency
+	maxL := m.maxLatency
+	m.mu.RUnlock()
+
+	if minL <= 0 && maxL <= 0 {
+		return ctx.Err()
+	}
+
+	diff := maxL - minL
+	d := minL
+	if diff > 0 {
+		count := atomic.AddInt64(&m.jitterCounter, 1)
+		d += time.Duration(count % int64(diff))
+	}
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func (m *mockChaosTrackerClient) FetchProjects(ctx context.Context) ([]issue.ProjectRecord, error) {
+	atomic.AddInt64(&m.activeCalls, 1)
+	defer atomic.AddInt64(&m.activeCalls, -1)
+	atomic.AddInt64(&m.totalCalls, 1)
+
+	if err := m.delay(ctx); err != nil {
+		return nil, err
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.failFetchProj != nil {
+		return nil, m.failFetchProj
+	}
+	return m.projects, nil
+}
+
+func (m *mockChaosTrackerClient) FetchStates(ctx context.Context, projectID string) ([]issue.StateRecord, error) {
+	atomic.AddInt64(&m.activeCalls, 1)
+	defer atomic.AddInt64(&m.activeCalls, -1)
+	atomic.AddInt64(&m.totalCalls, 1)
+
+	if err := m.delay(ctx); err != nil {
+		return nil, err
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if err, fail := m.failProjects[projectID]; fail && err != nil {
+		return nil, err
+	}
+	return m.states[projectID], nil
+}
+
+func (m *mockChaosTrackerClient) FetchLabels(ctx context.Context, projectID string) ([]issue.Label, error) {
+	atomic.AddInt64(&m.activeCalls, 1)
+	defer atomic.AddInt64(&m.activeCalls, -1)
+	atomic.AddInt64(&m.totalCalls, 1)
+
+	if err := m.delay(ctx); err != nil {
+		return nil, err
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if err, fail := m.failProjects[projectID]; fail && err != nil {
+		return nil, err
+	}
+	return m.labels[projectID], nil
+}
+
+func (m *mockChaosTrackerClient) FetchIssues(ctx context.Context, projectID, projectKey string, limit int) ([]issue.IssueSnapshot, error) {
+	atomic.AddInt64(&m.activeCalls, 1)
+	defer atomic.AddInt64(&m.activeCalls, -1)
+	atomic.AddInt64(&m.totalCalls, 1)
+
+	if err := m.delay(ctx); err != nil {
+		return nil, err
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if err, fail := m.failProjects[projectKey]; fail && err != nil {
+		return nil, err
+	}
+	if err, fail := m.failProjects[projectID]; fail && err != nil {
+		return nil, err
+	}
+
+	if snk, ok := m.issues[projectKey]; ok {
+		return snk, nil
+	}
+	return m.issues[projectID], nil
+}
+
+func (m *mockChaosTrackerClient) AddProjectWithData(identifier, name string, issueCount int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	projID := "proj-uuid-" + strings.ToLower(identifier)
+	m.projects = append(m.projects, issue.ProjectRecord{
+		Identifier: identifier,
+		ProjectID:  projID,
+		Name:       name,
+		Workspace:  "teamprogra",
+	})
+
+	stateBacklogID := fmt.Sprintf("st-backlog-%s", strings.ToLower(identifier))
+	stateStartedID := fmt.Sprintf("st-started-%s", strings.ToLower(identifier))
+	m.states[projID] = []issue.StateRecord{
+		{ID: stateBacklogID, ProjectID: projID, Name: "Backlog", Slug: "backlog", GroupName: "backlog"},
+		{ID: stateStartedID, ProjectID: projID, Name: "In Progress", Slug: "in_progress", GroupName: "started"},
+	}
+
+	m.labels[projID] = []issue.Label{
+		{ID: fmt.Sprintf("lbl-%s-1", strings.ToLower(identifier)), ProjectID: projID, Name: "backend"},
+		{ID: fmt.Sprintf("lbl-%s-2", strings.ToLower(identifier)), ProjectID: projID, Name: "infra"},
+	}
+
+	var snapshots []issue.IssueSnapshot
+	for i := 1; i <= issueCount; i++ {
+		issueKey := fmt.Sprintf("%s-%d", identifier, i)
+		issueID := fmt.Sprintf("iss-%s-uuid-%d", strings.ToLower(identifier), i)
+		targetStateID := stateStartedID
+		if i%2 == 0 {
+			targetStateID = stateBacklogID
+		}
+		rawJSON := fmt.Sprintf(`{"id":%q,"state":%q,"name":%q}`, issueID, targetStateID, fmt.Sprintf("Issue %s", issueKey))
+
+		snapshots = append(snapshots, issue.IssueSnapshot{
+			Item: issue.WorkItem{
+				ID:         issueID,
+				Key:        issueKey,
+				ProjectID:  projID,
+				ProjectKey: identifier,
+				SequenceID: i,
+				Title:      fmt.Sprintf("Issue %s", issueKey),
+				Priority:   "high",
+				StateName:  "", // Vacío a propósito: valida mapeo concurrente desde SyncStates
+				CreatedAt:  time.Now(),
+				UpdatedAt:  time.Now(),
+			},
+			RawJSON: rawJSON,
+		})
+	}
+	m.issues[projID] = snapshots
+	m.issues[identifier] = snapshots
+}
+
+// TestAdversarial_Sync_MassiveConcurrencyWithJitter somete el worker pool de Sync (maxWorkers=5)
+// a una carga masiva de 40 proyectos simultáneos (120 issues en total) con latencias asíncronas
+// y jitter aleatorio (1-10ms) en cada upstream call.
+// Valida:
+// 1. Que los 40 proyectos y 120 issues se sincronicen por completo sin pérdida de datos.
+// 2. Que el mapeo concurrente de estados desde SyncStates hacia FetchIssues sea atómico y preciso.
+// 3. Que el SQLite en disco con modo WAL y doble pool maneje las escrituras concurrentes sin sqlite_busy.
+// 4. Que no existan llamadas colgadas o fugas de llamadas en el cliente mock.
+func TestAdversarial_Sync_MassiveConcurrencyWithJitter(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "alo_massive_sync.db")
+
+	store, err := sqlite.NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("error abriendo SQLite WAL en disco: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	mockClient := newMockChaosTrackerClient()
+	mockClient.SetLatency(1*time.Millisecond, 8*time.Millisecond)
+
+	const projectCount = 40
+	const issuesPerProject = 3
+	const expectedTotalIssues = projectCount * issuesPerProject
+
+	for i := 1; i <= projectCount; i++ {
+		key := fmt.Sprintf("PROJ%02d", i)
+		name := fmt.Sprintf("Proyecto Concurrente %02d", i)
+		mockClient.AddProjectWithData(key, name, issuesPerProject)
+	}
+
+	svc := app.NewTrackerService(store, mockClient)
+
+	start := time.Now()
+	totalSynced, err := svc.Sync(ctx, "", true)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("Sync masivo falló inesperadamente: %v", err)
+	}
+
+	if totalSynced != expectedTotalIssues {
+		t.Fatalf("totalSynced incorrecto: esperados %d, obtenidos %d", expectedTotalIssues, totalSynced)
+	}
+
+	t.Logf("Sync masivo de %d proyectos (%d tareas) completado en %v", projectCount, totalSynced, elapsed)
+
+	// Verificación de integridad en la base de datos SQLite
+	projectsInDB, err := store.ListProjects(ctx)
+	if err != nil {
+		t.Fatalf("error listando proyectos en DB: %v", err)
+	}
+	if len(projectsInDB) != projectCount {
+		t.Fatalf("se esperaban %d proyectos en DB, encontrados %d", projectCount, len(projectsInDB))
+	}
+
+	// Verificar resolución de estados para cada tarea
+	for i := 1; i <= projectCount; i++ {
+		keyPrefix := fmt.Sprintf("PROJ%02d", i)
+		for j := 1; j <= issuesPerProject; j++ {
+			issueKey := fmt.Sprintf("%s-%d", keyPrefix, j)
+			item, err := store.GetIssue(ctx, issueKey)
+			if err != nil || item == nil {
+				t.Fatalf("tarea %s no persistida en DB: %v", issueKey, err)
+			}
+			if item.StateName == "" || item.StateGroup == "" {
+				t.Errorf("tarea %s no resolvió su estado concurrentemente: StateName=%q, StateGroup=%q",
+					issueKey, item.StateName, item.StateGroup)
+			}
+			if j%2 == 0 {
+				if item.StateName != "Backlog" || item.StateGroup != "backlog" {
+					t.Errorf("tarea %s esperaba Backlog/backlog, obtuvo %s/%s", issueKey, item.StateName, item.StateGroup)
+				}
+			} else {
+				if item.StateName != "In Progress" || item.StateGroup != "started" {
+					t.Errorf("tarea %s esperaba In Progress/started, obtuvo %s/%s", issueKey, item.StateName, item.StateGroup)
+				}
+			}
+		}
+	}
+
+	// Verificar que no queden llamadas en vuelo en el cliente
+	if active := atomic.LoadInt64(&mockClient.activeCalls); active != 0 {
+		t.Errorf("se detectaron %d llamadas en vuelo residuales en el cliente mock", active)
+	}
+}
+
+// TestAdversarial_Sync_UpstreamChaosAndPartialFailures somete a Sync a fallos caóticos
+// upstream: 10 de 30 proyectos fallan intencionalmente con HTTP 500, HTTP 503, caídas de
+// conexión y timeouts, mientras los otros 20 proyectos responden con normalidad.
+// Valida:
+// 1. Que Sync procese con gracia los proyectos sanos sin abortar el lote completo por fallos individuales.
+// 2. Que el contador totalSynced refleje de forma determinista la suma exacta de las tareas de proyectos sanos (60).
+// 3. Que las tareas de proyectos fallidos no queden corruptas o incompletas en la base de datos.
+// 4. Que no existan deadlocks en el canal de jobs ni en el canal de results.
+func TestAdversarial_Sync_UpstreamChaosAndPartialFailures(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "alo_chaos_sync.db")
+
+	store, err := sqlite.NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("error abriendo SQLite: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	mockClient := newMockChaosTrackerClient()
+	mockClient.SetLatency(1*time.Millisecond, 6*time.Millisecond)
+
+	const healthyProjects = 20
+	const faultyProjects = 10
+	const issuesPerProject = 3
+	const expectedHealthyIssues = healthyProjects * issuesPerProject
+
+	// Inyectar 20 proyectos sanos
+	for i := 1; i <= healthyProjects; i++ {
+		key := fmt.Sprintf("SAN%02d", i)
+		mockClient.AddProjectWithData(key, fmt.Sprintf("Proyecto Sano %02d", i), issuesPerProject)
+	}
+
+	// Inyectar 10 proyectos con diferentes modos de fallo caóticos
+	for i := 1; i <= faultyProjects; i++ {
+		key := fmt.Sprintf("CHAOS%02d", i)
+		mockClient.AddProjectWithData(key, fmt.Sprintf("Proyecto Caos %02d", i), issuesPerProject)
+
+		var injectedErr error
+		switch i % 4 {
+		case 0:
+			injectedErr = fmt.Errorf("HTTP 500 Internal Server Error: plane database transaction deadlock")
+		case 1:
+			injectedErr = fmt.Errorf("HTTP 503 Service Unavailable: rate limit quota exhausted")
+		case 2:
+			injectedErr = fmt.Errorf("read tcp 10.0.0.1:8000: connection reset by peer")
+		case 3:
+			injectedErr = fmt.Errorf("i/o timeout: plane backend gateway unresponsive")
+		}
+		mockClient.SetProjectFailure(key, injectedErr)
+	}
+
+	svc := app.NewTrackerService(store, mockClient)
+
+	totalSynced, err := svc.Sync(ctx, "", true)
+	if err != nil {
+		t.Fatalf("Sync con fallos parciales falló fatalmente: %v", err)
+	}
+
+	if totalSynced != expectedHealthyIssues {
+		t.Fatalf("totalSynced inconsistente: esperados %d (sólo sanos), obtenidos %d", expectedHealthyIssues, totalSynced)
+	}
+
+	t.Logf("Sync con caos upstream completado: %d tareas sincronizadas de 20 proyectos sanos (10 proyectos con fallo amortiguados)", totalSynced)
+
+	// Validar que las tareas sanas existen en la base de datos
+	for i := 1; i <= healthyProjects; i++ {
+		keyPrefix := fmt.Sprintf("SAN%02d", i)
+		for j := 1; j <= issuesPerProject; j++ {
+			issueKey := fmt.Sprintf("%s-%d", keyPrefix, j)
+			item, err := store.GetIssue(ctx, issueKey)
+			if err != nil || item == nil {
+				t.Fatalf("tarea sana %s debió ser guardada: %v", issueKey, err)
+			}
+		}
+	}
+
+	// Validar que ninguna tarea de los proyectos con fallo exista en SQLite
+	for i := 1; i <= faultyProjects; i++ {
+		keyPrefix := fmt.Sprintf("CHAOS%02d", i)
+		for j := 1; j <= issuesPerProject; j++ {
+			issueKey := fmt.Sprintf("%s-%d", keyPrefix, j)
+			item, _ := store.GetIssue(ctx, issueKey)
+			if item != nil {
+				t.Errorf("tarea de proyecto fallido %s no debió guardarse", issueKey)
+			}
+		}
+	}
+
+	if active := atomic.LoadInt64(&mockClient.activeCalls); active != 0 {
+		t.Errorf("llamadas activas residuales tras caos upstream: %d", active)
+	}
+}
+
+// TestAdversarial_Sync_AbruptContextCancellation valida el comportamiento del sistema
+// ante cancelaciones abruptas de contexto (context.WithCancel y context.WithTimeout) tanto
+// en el pool paralelo de Sync como en las sub-goroutines de SyncIssues.
+// Valida:
+// 1. Que no existan fugas de goroutines (goroutine leaks) y los workers aborten limpiamente.
+// 2. Que se retorne context.Canceled o context.DeadlineExceeded sin causar panics.
+// 3. Que el canal jobs se drene o se cierre adecuadamente sin deadlocks.
+func TestAdversarial_Sync_AbruptContextCancellation(t *testing.T) {
+	t.Run("MidFlight_ContextCancel", func(t *testing.T) {
+		tempDir := t.TempDir()
+		store, err := sqlite.NewStore(filepath.Join(tempDir, "alo_cancel.db"))
+		if err != nil {
+			t.Fatalf("error creando SQLite: %v", err)
+		}
+		defer store.Close()
+
+		mockClient := newMockChaosTrackerClient()
+		// Latencia suficiente para asegurar que la cancelación ocurre durante la ejecución de los workers
+		mockClient.SetLatency(15*time.Millisecond, 35*time.Millisecond)
+
+		const projectCount = 30
+		for i := 1; i <= projectCount; i++ {
+			mockClient.AddProjectWithData(fmt.Sprintf("CAN%02d", i), fmt.Sprintf("Cancel Project %02d", i), 3)
+		}
+
+		svc := app.NewTrackerService(store, mockClient)
+
+		initialGoroutines := runtime.NumGoroutine()
+		ctx, cancel := context.WithCancel(context.Background())
+
+		type syncOut struct {
+			count int
+			err   error
+		}
+		doneCh := make(chan syncOut, 1)
+
+		go func() {
+			count, syncErr := svc.Sync(ctx, "", true)
+			doneCh <- syncOut{count: count, err: syncErr}
+		}()
+
+		// Esperar que los workers comiencen a procesar trabajos y luego cancelar inmediatamente
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+
+		select {
+		case out := <-doneCh:
+			if out.err == nil {
+				t.Fatalf("se esperaba error de contexto cancelado, pero retornó nil")
+			}
+			if !errors.Is(out.err, context.Canceled) && !strings.Contains(out.err.Error(), "context canceled") {
+				t.Errorf("error esperado context.Canceled, obtenido: %v", out.err)
+			}
+			t.Logf("Cancelación mid-flight recibida limpiamente: err=%v, count=%d", out.err, out.count)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("DEADLOCK detectado: Sync no retornó tras la cancelación de contexto")
+		}
+
+		// Esperar hasta 200ms para asegurar que las goroutines en vuelo del mock retornen
+		deadline := time.Now().Add(250 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			if atomic.LoadInt64(&mockClient.activeCalls) == 0 {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		if active := atomic.LoadInt64(&mockClient.activeCalls); active != 0 {
+			t.Errorf("fuga detectada: quedan %d llamadas activas en vuelo tras cancelación", active)
+		}
+
+		// Verificar que el número de goroutines del runtime retorne al nivel basal (sin leaks)
+		leaked := true
+		for i := 0; i < 20; i++ {
+			if runtime.NumGoroutine() <= initialGoroutines+2 {
+				leaked = false
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if leaked {
+			t.Errorf("fuga de goroutines detectada: iniciales=%d, actuales=%d", initialGoroutines, runtime.NumGoroutine())
+		}
+	})
+
+	t.Run("Timeout_DeadlineExceeded", func(t *testing.T) {
+		tempDir := t.TempDir()
+		store, err := sqlite.NewStore(filepath.Join(tempDir, "alo_timeout.db"))
+		if err != nil {
+			t.Fatalf("error creando SQLite: %v", err)
+		}
+		defer store.Close()
+
+		mockClient := newMockChaosTrackerClient()
+		// Cada llamada tarda al menos 30ms, con timeout global de 10ms
+		mockClient.SetLatency(30*time.Millisecond, 50*time.Millisecond)
+
+		for i := 1; i <= 20; i++ {
+			mockClient.AddProjectWithData(fmt.Sprintf("TIM%02d", i), fmt.Sprintf("Timeout Proj %02d", i), 2)
+		}
+
+		svc := app.NewTrackerService(store, mockClient)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+
+		doneCh := make(chan error, 1)
+		go func() {
+			_, err := svc.Sync(ctx, "", true)
+			doneCh <- err
+		}()
+
+		select {
+		case err := <-doneCh:
+			if err == nil {
+				t.Fatalf("se esperaba error de deadline exceeded, pero retornó nil")
+			}
+			if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "context deadline exceeded") {
+				t.Errorf("error esperado context.DeadlineExceeded, obtenido: %v", err)
+			}
+			t.Logf("Timeout verificado exitosamente: %v", err)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("DEADLOCK detectado: Sync no respetó context.DeadlineExceeded")
+		}
+
+		// Verificar drenaje de llamadas
+		time.Sleep(100 * time.Millisecond)
+		if active := atomic.LoadInt64(&mockClient.activeCalls); active != 0 {
+			t.Errorf("fuga de llamadas tras timeout: %d activas", active)
+		}
+	})
+
+	t.Run("SingleProject_SyncIssues_Timeout", func(t *testing.T) {
+		tempDir := t.TempDir()
+		store, err := sqlite.NewStore(filepath.Join(tempDir, "alo_single_timeout.db"))
+		if err != nil {
+			t.Fatalf("error creando SQLite: %v", err)
+		}
+		defer store.Close()
+
+		mockClient := newMockChaosTrackerClient()
+		mockClient.SetLatency(40*time.Millisecond, 60*time.Millisecond)
+		mockClient.AddProjectWithData("SINGLE", "Single Project", 5)
+
+		svc := app.NewTrackerService(store, mockClient)
+
+		// Ejecutar con un timeout de 10ms
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+
+		count, err := svc.SyncIssues(ctx, "SINGLE", 100)
+		if err == nil {
+			t.Fatalf("se esperaba error por context.DeadlineExceeded, obtenido nil")
+		}
+		if count != 0 {
+			t.Errorf("se esperaba count=0 tras timeout, obtenido %d", count)
+		}
+		if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "deadline exceeded") {
+			t.Errorf("se esperaba error de timeout, recibido: %v", err)
+		}
+
+		// Validar que las 3 goroutines internas (SyncStates, SyncLabels, FetchIssues) se detuvieron
+		time.Sleep(100 * time.Millisecond)
+		if active := atomic.LoadInt64(&mockClient.activeCalls); active != 0 {
+			t.Errorf("fuga de sub-goroutines en SyncIssues: %d llamadas activas", active)
+		}
+	})
+}
+
+// TestAdversarial_SyncIssues_SingleProjectConcurrency valida el comportamiento y la
+// sincronización interna de goroutines concurrentes (SyncStates, SyncLabels y FetchIssues)
+// dentro de SyncIssues.
+// Valida:
+// 1. Descarga concurrente sin condiciones de carrera de estados, etiquetas y tareas.
+// 2. Resolución dinámica de ProjectID cuando el proyecto no está cacheador previamente.
+// 3. Mapeo y enriquecimiento correcto de StateName y StateGroup a partir de stateMap.
+// 4. Inserción correcta de Snapshots JSON crudos en issues_snapshots.
+func TestAdversarial_SyncIssues_SingleProjectConcurrency(t *testing.T) {
+	tempDir := t.TempDir()
+	store, err := sqlite.NewStore(filepath.Join(tempDir, "alo_single_proj.db"))
+	if err != nil {
+		t.Fatalf("error abriendo SQLite: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	mockClient := newMockChaosTrackerClient()
+	mockClient.SetLatency(2*time.Millisecond, 8*time.Millisecond)
+
+	const issueCount = 10
+	mockClient.AddProjectWithData("OMNIFY", "Omnify Core", issueCount)
+
+	svc := app.NewTrackerService(store, mockClient)
+
+	// Ejecutar SyncIssues sin precachear proyecto en SQLite
+	count, err := svc.SyncIssues(ctx, "OMNIFY", 50)
+	if err != nil {
+		t.Fatalf("SyncIssues falló: %v", err)
+	}
+
+	if count != issueCount {
+		t.Fatalf("se esperaban %d issues sincronizados, obtenidos %d", issueCount, count)
+	}
+
+	// Verificar estados y snapshots en SQLite
+	for i := 1; i <= issueCount; i++ {
+		key := fmt.Sprintf("OMNIFY-%d", i)
+		item, err := store.GetIssue(ctx, key)
+		if err != nil || item == nil {
+			t.Fatalf("issue %s no encontrado en SQLite: %v", key, err)
+		}
+		if item.StateName == "" || item.StateGroup == "" {
+			t.Errorf("issue %s tiene campos de estado vacíos tras SyncIssues: %+v", key, item)
+		}
+	}
+
+	// Verificar que las etiquetas fueron persistidas
+	labels, err := store.ListLabels(ctx, "proj-uuid-omnify")
+	if err != nil || len(labels) == 0 {
+		t.Errorf("las etiquetas del proyecto OMNIFY no se guardaron concurrentemente: err=%v, count=%d", err, len(labels))
+	}
+}
+
+// TestAdversarial_Sync_RaceAndContention somete el TrackerService y la base de datos
+// SQLite a lectura, escritura, sincronización masiva y búsquedas simultáneas de múltiples
+// goroutines concurrentes bajo el detector de carreras de Go (-race).
+func TestAdversarial_Sync_RaceAndContention(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "alo_race_contention.db")
+
+	store, err := sqlite.NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("error abriendo SQLite en disco: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	mockClient := newMockChaosTrackerClient()
+	mockClient.SetLatency(1*time.Millisecond, 4*time.Millisecond)
+
+	for i := 1; i <= 8; i++ {
+		mockClient.AddProjectWithData(fmt.Sprintf("RACE%d", i), fmt.Sprintf("Race Project %d", i), 4)
+	}
+
+	svc := app.NewTrackerService(store, mockClient)
+
+	// Inicializar proyecto base
+	_, _ = svc.Sync(ctx, "", true)
+
+	const numWorkers = 8
+	const opsPerWorker = 15
+
+	var wg sync.WaitGroup
+	var errorCount int64
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for j := 0; j < opsPerWorker; j++ {
+				op := (workerID + j) % 5
+				switch op {
+				case 0:
+					// Sync all
+					_, err := svc.Sync(ctx, "", true)
+					if err != nil {
+						atomic.AddInt64(&errorCount, 1)
+					}
+				case 1:
+					// Sync individual project
+					projKey := fmt.Sprintf("RACE%d", (workerID%8)+1)
+					_, err := svc.SyncIssues(ctx, projKey, 100)
+					if err != nil {
+						atomic.AddInt64(&errorCount, 1)
+					}
+				case 2:
+					// Search
+					_, err := svc.Search(ctx, "Issue", "", 5)
+					if err != nil {
+						atomic.AddInt64(&errorCount, 1)
+					}
+				case 3:
+					// List
+					_, err := svc.List(ctx, issue.IssueFilter{Limit: 10})
+					if err != nil {
+						atomic.AddInt64(&errorCount, 1)
+					}
+				case 4:
+					// Create local issue
+					_, err := svc.Create(ctx, issue.CreateIssueInput{
+						ProjectKey: "RACE1",
+						Title:      fmt.Sprintf("Concurrent task from race worker %d-%d", workerID, j),
+						Priority:   "medium",
+					})
+					if err != nil {
+						atomic.AddInt64(&errorCount, 1)
+					}
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	t.Logf("Prueba de contención y carreras completada. Errores totales capturados: %d", atomic.LoadInt64(&errorCount))
+	if count := atomic.LoadInt64(&errorCount); count > 0 {
+		t.Errorf("se detectaron %d errores durante la ejecución concurrente bajo -race", count)
 	}
 }

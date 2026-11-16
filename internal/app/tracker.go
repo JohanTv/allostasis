@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/allostasis/alo/internal/domain/issue"
@@ -282,15 +283,33 @@ func (s *TrackerService) SyncIssues(ctx context.Context, projectKey string, limi
 		return 0, fmt.Errorf("proyecto %s no encontrado en Plane", projectKey)
 	}
 
-	states, _ := s.SyncStates(ctx, projectID)
-	_, _ = s.SyncLabels(ctx, projectID)
+	var (
+		states    []issue.StateRecord
+		snapshots []issue.IssueSnapshot
+		fetchErr  error
+		wg        sync.WaitGroup
+	)
 
-	snapshots, err := s.client.FetchIssues(ctx, projectID, projectKey, limit)
-	if err != nil {
-		return 0, err
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		states, _ = s.SyncStates(ctx, projectID)
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = s.SyncLabels(ctx, projectID)
+	}()
+	go func() {
+		defer wg.Done()
+		snapshots, fetchErr = s.client.FetchIssues(ctx, projectID, projectKey, limit)
+	}()
+	wg.Wait()
+
+	if fetchErr != nil {
+		return 0, fetchErr
 	}
 
-	stateMap := make(map[string]issue.StateRecord)
+	stateMap := make(map[string]issue.StateRecord, len(states))
 	for _, st := range states {
 		stateMap[st.ID] = st
 	}
@@ -328,11 +347,56 @@ func (s *TrackerService) Sync(ctx context.Context, projectKey string, allProject
 
 	totalSynced := 0
 	if allProjects {
+		if len(projects) == 0 {
+			return 0, nil
+		}
+
+		const maxWorkers = 5
+		workers := maxWorkers
+		if len(projects) < workers {
+			workers = len(projects)
+		}
+
+		type syncResult struct {
+			count int
+			err   error
+		}
+
+		jobs := make(chan issue.ProjectRecord, len(projects))
+		results := make(chan syncResult, len(projects))
+		var wg sync.WaitGroup
+
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for p := range jobs {
+					if ctx.Err() != nil {
+						results <- syncResult{err: ctx.Err()}
+						continue
+					}
+					count, syncErr := s.SyncIssues(ctx, p.Identifier, 100)
+					results <- syncResult{count: count, err: syncErr}
+				}
+			}()
+		}
+
 		for _, p := range projects {
-			count, err := s.SyncIssues(ctx, p.Identifier, 100)
-			if err == nil {
-				totalSynced += count
+			jobs <- p
+		}
+		close(jobs)
+
+		wg.Wait()
+		close(results)
+
+		for res := range results {
+			if res.err == nil {
+				totalSynced += res.count
 			}
+		}
+
+		if ctx.Err() != nil {
+			return totalSynced, ctx.Err()
 		}
 	} else {
 		if projectKey == "" {
