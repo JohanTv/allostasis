@@ -26,8 +26,13 @@ func DefaultDatabasePath() string {
 	}
 
 	aloDir := filepath.Join(home, ".cache", "allostasis")
-	_ = os.MkdirAll(aloDir, 0755)
-	return filepath.Join(aloDir, "allostasis.db")
+	_ = os.MkdirAll(aloDir, 0700)
+	_ = os.Chmod(aloDir, 0700)
+	aloDB := filepath.Join(aloDir, "allostasis.db")
+	if fi, err := os.Stat(aloDB); err == nil && fi.Mode().Perm() != 0600 {
+		_ = os.Chmod(aloDB, 0600)
+	}
+	return aloDB
 }
 
 // CockpitSnapshot captura el estado holístico del desarrollador para CLI y TUI.

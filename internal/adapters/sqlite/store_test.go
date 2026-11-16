@@ -119,7 +119,7 @@ func TestStore_InMemoryIntegration(t *testing.T) {
 	}
 
 	// 5. Probar Proyectos y Estados
-	p := sqlite.ProjectRecord{Identifier: "OMNIFY", ProjectID: "proj-omnify", Name: "Omnify Platform", Workspace: "teamprogra"}
+	p := sqlite.ProjectRecord{Identifier: "OMNIFY", ProjectID: "proj-omnify", Name: "Omnify Platform", Workspace: "test-workspace"}
 	if err := store.SaveProject(ctx, p); err != nil {
 		t.Fatalf("error en SaveProject: %v", err)
 	}

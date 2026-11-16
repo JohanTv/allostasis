@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -44,7 +45,7 @@ func LoadConfigFromEnv() Config {
 
 	workspace := os.Getenv("PLANE_WORKSPACE")
 	if workspace == "" {
-		workspace = "teamprogra"
+		workspace = os.Getenv("PLANE_WORKSPACE_SLUG")
 	}
 
 	timeoutSec := 45
@@ -737,6 +738,77 @@ func (c *Client) DeleteIssueRemote(ctx context.Context, projectID, issueID strin
 	}
 
 	return nil
+}
+
+// FetchComments recupera todos los comentarios de una tarea en Plane CE usando paginación por cursor.
+func (c *Client) FetchComments(ctx context.Context, projectID, issueID string) ([]issue.CommentRecord, error) {
+	if c.cfg.APIKey == "" {
+		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
+	}
+	if c.cfg.Workspace == "" {
+		return nil, fmt.Errorf("PLANE_WORKSPACE no configurado")
+	}
+
+	var allComments []issue.CommentRecord
+	cursor := ""
+	const maxPages = 50
+
+	for page := 0; page < maxPages; page++ {
+		endpoint := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issues/%s/comments/", c.cfg.BaseURL, c.cfg.Workspace, projectID, issueID)
+		if cursor != "" {
+			endpoint = fmt.Sprintf("%s?cursor=%s", endpoint, url.QueryEscape(cursor))
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("x-api-key", c.cfg.APIKey)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("error de red al consultar comentarios en Plane: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			respBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("Plane retornó HTTP %d al consultar comentarios: %s", resp.StatusCode, string(respBytes))
+		}
+
+		var pageResp struct {
+			Results []struct {
+				ID          string `json:"id"`
+				CommentHTML string `json:"comment_html"`
+				Actor       string `json:"actor"`
+				CreatedBy   string `json:"created_by"`
+			} `json:"results"`
+			NextCursor      string `json:"next_cursor"`
+			NextPageResults bool   `json:"next_page_results"`
+		}
+
+		err = json.NewDecoder(resp.Body).Decode(&pageResp)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("error al decodificar comentarios de Plane: %w", err)
+		}
+
+		for _, item := range pageResp.Results {
+			allComments = append(allComments, issue.CommentRecord{
+				ID:          item.ID,
+				CommentHTML: item.CommentHTML,
+				Actor:       item.Actor,
+				CreatedBy:   item.CreatedBy,
+			})
+		}
+
+		if !pageResp.NextPageResults || pageResp.NextCursor == "" {
+			return allComments, nil
+		}
+		cursor = pageResp.NextCursor
+	}
+
+	return nil, fmt.Errorf("el ticket supera el límite de %d páginas de comentarios para verificar salvaguardas de horas", maxPages)
 }
 
 // AddLinkRemote asocia un enlace a una tarea en Plane CE.

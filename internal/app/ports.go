@@ -52,7 +52,11 @@ type IssueStore interface {
 	DropOutboxItem(ctx context.Context, id int64) error
 	UpdateOutboxSent(ctx context.Context, id int64, planeCommentID string) error
 	UpdateOutboxFailed(ctx context.Context, id int64, errMsg string) error
+	CountPendingOutbox(ctx context.Context, ticketRef string) (int, error)
 	MigrateLocalIssue(ctx context.Context, oldID, oldKey string, newItem *issue.WorkItem) error
+
+	// Worklogs locales
+	GetTicketWorklogs(ctx context.Context, ticketID string) ([]issue.WorklogRecord, error)
 
 	// Reportes
 	GetTimeReport(ctx context.Context, fromDate, toDate, track, workerType string) (*issue.TimeReport, error)
@@ -93,6 +97,7 @@ type RemoteTrackerClient interface {
 	CreateIssueRemote(ctx context.Context, projectID string, input issue.CreateIssueInput, stateID string) (*issue.WorkItem, error)
 	UpdateIssueRemote(ctx context.Context, projectID, issueID string, input issue.UpdateIssueInput, stateID string) error
 	DeleteIssueRemote(ctx context.Context, projectID, issueID string) error
+	FetchComments(ctx context.Context, projectID, issueID string) ([]issue.CommentRecord, error)
 	SendCommentRaw(ctx context.Context, targetWS, projectID, issueID, payloadJSON string) (string, error)
 	EditCommentRemote(ctx context.Context, projectID, issueID, commentID, newBody string) error
 	DeleteCommentRemote(ctx context.Context, projectID, issueID, commentID string) error

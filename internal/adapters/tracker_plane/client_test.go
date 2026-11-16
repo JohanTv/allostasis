@@ -17,7 +17,7 @@ func TestClient_SendCommentRaw(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		if r.URL.Path != "/api/v1/workspaces/teamprogra/projects/proj-uuid-1/issues/issue-uuid-1/comments/" {
+		if r.URL.Path != "/api/v1/workspaces/test-workspace/projects/proj-uuid-1/issues/issue-uuid-1/comments/" {
 			http.NotFound(w, r)
 			return
 		}
@@ -29,13 +29,13 @@ func TestClient_SendCommentRaw(t *testing.T) {
 	cfg := tracker_plane.Config{
 		BaseURL:   server.URL,
 		APIKey:    "secret-token-123",
-		Workspace: "teamprogra",
+		Workspace: "test-workspace",
 		Timeout:   2 * time.Second,
 	}
 	client := tracker_plane.NewClient(cfg)
 	ctx := context.Background()
 
-	commentID, err := client.SendCommentRaw(ctx, "teamprogra", "proj-uuid-1", "issue-uuid-1", `{"comment_html":"<p>test</p>"}`)
+	commentID, err := client.SendCommentRaw(ctx, "test-workspace", "proj-uuid-1", "issue-uuid-1", `{"comment_html":"<p>test</p>"}`)
 	if err != nil {
 		t.Fatalf("SendCommentRaw falló: %v", err)
 	}
@@ -56,30 +56,30 @@ func TestClient_TrackerOperations(t *testing.T) {
 		case r.URL.Path == "/api/v1/users/me/":
 			_, _ = w.Write([]byte(`{"id":"usr-1","email":"johan@example.com","first_name":"Johan","last_name":"Tv","display_name":"johantv"}`))
 
-		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/":
+		case r.URL.Path == "/api/v1/workspaces/test-workspace/projects/":
 			_, _ = w.Write([]byte(`{"results":[{"id":"proj-omnify","identifier":"OMNIFY","name":"Omnify Platform"}]}`))
 
-		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/proj-omnify/states/":
+		case r.URL.Path == "/api/v1/workspaces/test-workspace/projects/proj-omnify/states/":
 			_, _ = w.Write([]byte(`{"results":[{"id":"st-prog","name":"Progreso","slug":"progreso","group":"started"}]}`))
 
-		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/proj-omnify/issues/" && r.Method == http.MethodGet:
+		case r.URL.Path == "/api/v1/workspaces/test-workspace/projects/proj-omnify/issues/" && r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`{"results":[
 				{"id":"iss-1","sequence_id":269,"name":"[FEAT] Canal de atención Facebook Messenger e Instagram DM","priority":"high","state_detail":{"name":"Backlog","group":"backlog"},"labels":["backend","feat"]},
 				{"id":"iss-2","sequence_id":270,"name":"[FEAT] Segundo canal","priority":"medium","state":"st-prog","assignees":["usr-1"],"labels":["frontend"]}
 			]}`))
 
-		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/proj-omnify/issues/" && r.Method == http.MethodPost:
+		case r.URL.Path == "/api/v1/workspaces/test-workspace/projects/proj-omnify/issues/" && r.Method == http.MethodPost:
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"iss-created","sequence_id":270,"name":"[FEAT] Nuevo Canal","priority":"medium"}`))
 
-		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/proj-omnify/issues/iss-1/" && r.Method == http.MethodPatch:
+		case r.URL.Path == "/api/v1/workspaces/test-workspace/projects/proj-omnify/issues/iss-1/" && r.Method == http.MethodPatch:
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"id":"iss-1","name":"Actualizado"}`))
 
-		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/proj-omnify/labels/":
+		case r.URL.Path == "/api/v1/workspaces/test-workspace/projects/proj-omnify/labels/":
 			_, _ = w.Write([]byte(`{"results":[{"id":"lbl-1","name":"backend","color":"#ff0000"}]}`))
 
-		case r.URL.Path == "/api/v1/workspaces/teamprogra/projects/proj-omnify/issues/iss-1/links/":
+		case r.URL.Path == "/api/v1/workspaces/test-workspace/projects/proj-omnify/issues/iss-1/links/":
 			if r.Method == http.MethodPost {
 				w.WriteHeader(http.StatusCreated)
 				_, _ = w.Write([]byte(`{"id":"lnk-1","title":"PR 10","url":"https://github.com/org/repo/pull/10"}`))
@@ -96,7 +96,7 @@ func TestClient_TrackerOperations(t *testing.T) {
 	cfg := tracker_plane.Config{
 		BaseURL:   server.URL,
 		APIKey:    "secret-token-123",
-		Workspace: "teamprogra",
+		Workspace: "test-workspace",
 		Timeout:   2 * time.Second,
 	}
 	client := tracker_plane.NewClient(cfg)

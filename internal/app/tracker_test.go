@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/allostasis/alo/internal/adapters/sqlite"
@@ -69,6 +70,7 @@ func TestTrackerService_CRUD_LocalFirst(t *testing.T) {
 
 type mockTrackerClient struct {
 	sentComments map[string]string
+	comments     map[string][]issue.CommentRecord
 }
 
 func (m *mockTrackerClient) Whoami(ctx context.Context) (*issue.UserInfo, error) {
@@ -99,6 +101,12 @@ func (m *mockTrackerClient) UpdateIssueRemote(ctx context.Context, projectID, is
 }
 func (m *mockTrackerClient) DeleteIssueRemote(ctx context.Context, projectID, issueID string) error {
 	return nil
+}
+func (m *mockTrackerClient) FetchComments(ctx context.Context, projectID, issueID string) ([]issue.CommentRecord, error) {
+	if m.comments != nil {
+		return m.comments[issueID], nil
+	}
+	return nil, nil
 }
 func (m *mockTrackerClient) SendCommentRaw(ctx context.Context, targetWS, projectID, issueID, payloadJSON string) (string, error) {
 	if m.sentComments == nil {
@@ -143,7 +151,7 @@ func TestTrackerService_FlushOutbox(t *testing.T) {
 	}
 
 	// Encolar outbox item
-	if err := store.EnqueueOutbox(ctx, "client-1", "OMNIFY-42", `{"comment_html":"<p>Bitácora de cierre</p>"}`, "teamprogra"); err != nil {
+	if err := store.EnqueueOutbox(ctx, "client-1", "OMNIFY-42", `{"comment_html":"<p>Bitácora de cierre</p>"}`, "test-workspace"); err != nil {
 		t.Fatalf("error encolando outbox: %v", err)
 	}
 
@@ -168,5 +176,101 @@ func TestTrackerService_FlushOutbox(t *testing.T) {
 	}
 	if len(pending) != 0 {
 		t.Errorf("se esperaba 0 registros pendientes, obtenidos %d", len(pending))
+	}
+}
+
+func TestTrackerService_Delete_Safeguards(t *testing.T) {
+	t.Setenv("PLANE_ACTOR_UUID", "usr-me")
+	ctx := context.Background()
+	store, err := sqlite.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("error abriendo store: %v", err)
+	}
+	defer store.Close()
+
+	// Guardar perfil de usuario para tener identidad propia
+	if err := store.SaveUserProfile(ctx, issue.UserInfo{ID: "usr-me", Email: "me@example.com"}); err != nil {
+		t.Fatalf("error guardando perfil: %v", err)
+	}
+
+	task := &issue.WorkItem{
+		ID:        "iss-100",
+		Key:       "OMNIFY-100",
+		ProjectID: "proj-1",
+		Title:     "Tarea de prueba delete",
+	}
+	if err := store.SaveIssue(ctx, task); err != nil {
+		t.Fatalf("error guardando issue: %v", err)
+	}
+
+	mockClient := &mockTrackerClient{
+		comments: make(map[string][]issue.CommentRecord),
+	}
+	svc := app.NewTrackerService(store, mockClient)
+
+	// 1. Rechazo por pending outbox
+	if err := store.EnqueueOutbox(ctx, "c-outbox", "OMNIFY-100", `{"comment_html":"test"}`, "test-workspace"); err != nil {
+		t.Fatalf("error encolando outbox: %v", err)
+	}
+	_, err = svc.Delete(ctx, "OMNIFY-100", true, false)
+	if err == nil || !strings.Contains(err.Error(), "cola de salida") {
+		t.Fatalf("se esperaba rechazo por outbox pendiente, obtenido: %v", err)
+	}
+	// Limpiar outbox
+	outboxList, _ := store.ListOutbox(ctx, true)
+	for _, o := range outboxList {
+		_ = store.DropOutboxItem(ctx, o.ID)
+	}
+
+	// 2. Rechazo incondicional por horas de terceros (ADR 0018)
+	mockClient.comments["iss-100"] = []issue.CommentRecord{
+		{
+			ID:          "comm-foreign",
+			CommentHTML: "<p>Bitácora</p><!-- PLANE_WORKLOG_METADATA {\"duration_minutes\": 60} -->",
+			Actor:       "usr-other",
+			CreatedBy:   "usr-other",
+		},
+	}
+	_, err = svc.Delete(ctx, "OMNIFY-100", true, true)
+	if err == nil || !strings.Contains(err.Error(), "horas de otra persona") {
+		t.Fatalf("se esperaba rechazo incondicional por horas foráneas, obtenido: %v", err)
+	}
+
+	// 3. Rechazo de horas propias sin --discard-worklogs
+	mockClient.comments["iss-100"] = []issue.CommentRecord{
+		{
+			ID:          "comm-own",
+			CommentHTML: "<p>Bitácora propia</p><!-- PLANE_WORKLOG_METADATA {\"duration_minutes\": 45} -->",
+			Actor:       "usr-me",
+			CreatedBy:   "usr-me",
+		},
+	}
+	_, err = svc.Delete(ctx, "OMNIFY-100", true, false)
+	if err == nil || !strings.Contains(err.Error(), "--discard-worklogs") {
+		t.Fatalf("se esperaba rechazo exigiendo --discard-worklogs, obtenido: %v", err)
+	}
+
+	// 4. Modo dry-run cuando falta --yes
+	res, err := svc.Delete(ctx, "OMNIFY-100", false, true)
+	if err != nil {
+		t.Fatalf("dry-run falló: %v", err)
+	}
+	if res["status"] != "dry_run" {
+		t.Fatalf("se esperaba status dry_run, obtenido: %v", res["status"])
+	}
+
+	// 5. Borrado exitoso con --yes y --discard-worklogs
+	res, err = svc.Delete(ctx, "OMNIFY-100", true, true)
+	if err != nil {
+		t.Fatalf("borrado confirmado falló: %v", err)
+	}
+	if res["status"] != "deleted" {
+		t.Fatalf("se esperaba status deleted, obtenido: %v", res["status"])
+	}
+
+	// Verificar que el ticket ya no existe localmente
+	deletedItem, err := store.GetIssue(ctx, "OMNIFY-100")
+	if err == nil && deletedItem != nil {
+		t.Fatalf("el ticket debería haberse eliminado localmente")
 	}
 }

@@ -548,10 +548,28 @@ func newTicketCmd() *cobra.Command {
 			}
 
 			if !ticketDeleteYesFlag {
-				fmt.Printf("⚠ Alcance de borrado para %s:\n  Para confirmar la eliminación permanente incluye: --yes\n", args[0])
+				title, _ := res["title"].(string)
+				comments, _ := res["comments"].(int)
+				hoursOwn, _ := res["hours_own"].(int)
+				ownMinutes, _ := res["own_minutes"].(int)
+
+				what := fmt.Sprintf("se pierden sus %d comentarios en Plane y %d registro(s) de horas tuyas (%d min)", comments, hoursOwn, ownMinutes)
+				fmt.Printf("⚠ Eliminar %s «%s» es irreversible: %s.\n", args[0], title, what)
+				fmt.Println("  También se pierden adjuntos, enlaces, subtareas e historial.")
+				fmt.Printf("  Para conservarlo sin eliminar: alo ticket update %s --state Cancelado\n", args[0])
+				discardHint := ""
+				if hoursOwn > 0 {
+					discardHint = " --discard-worklogs"
+				}
+				fmt.Printf("  Para confirmar eliminación:    alo ticket delete %s --yes%s\n", args[0], discardHint)
 				return
 			}
-			fmt.Printf("✓ Tarea %s eliminada limpiamente.\n", args[0])
+			hoursDiscarded, _ := res["hours_discarded"].(int)
+			discardNotice := ""
+			if hoursDiscarded > 0 {
+				discardNotice = fmt.Sprintf(" (%d registro(s) de horas descartado(s))", hoursDiscarded)
+			}
+			fmt.Printf("✓ Tarea %s eliminada limpiamente%s.\n", args[0], discardNotice)
 		},
 	}
 	ticketDeleteCmd.Flags().BoolVar(&ticketDeleteYesFlag, "yes", false, "Confirmar eliminación")

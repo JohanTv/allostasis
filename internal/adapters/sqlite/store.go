@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -33,14 +35,22 @@ func NewStore(dsn string) (*Store, error) {
 	isMem := false
 	if dsn == ":memory:" {
 		isMem = true
-		writeURI = "file:alo_shared_mem?mode=memory&cache=shared&_pragma=busy_timeout(10000)"
+		writeURI = "file:alo_shared_mem?mode=memory&cache=shared&_pragma=busy_timeout(10000)&_pragma=foreign_keys(ON)"
 		readURI = writeURI
 	} else if len(dsn) > 5 && dsn[:5] == "file:" {
 		writeURI = dsn
 		readURI = dsn
 	} else {
-		writeURI = fmt.Sprintf("file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)", dsn)
-		readURI = fmt.Sprintf("file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=query_only(ON)", dsn)
+		// Endurecer permisos de directorio (0700) y base de datos (0600)
+		dir := filepath.Dir(dsn)
+		_ = os.MkdirAll(dir, 0700)
+		_ = os.Chmod(dir, 0700)
+		if fi, err := os.Stat(dsn); err == nil && fi.Mode().Perm() != 0600 {
+			_ = os.Chmod(dsn, 0600)
+		}
+
+		writeURI = fmt.Sprintf("file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)", dsn)
+		readURI = fmt.Sprintf("file:%s?_pragma=busy_timeout(10000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(ON)&_pragma=query_only(ON)", dsn)
 	}
 
 	wDB, err := sql.Open("sqlite3", writeURI)
@@ -73,6 +83,12 @@ func NewStore(dsn string) (*Store, error) {
 	if err := s.migrateBaseline(); err != nil {
 		s.Close()
 		return nil, fmt.Errorf("error al ejecutar migraciones baseline: %w", err)
+	}
+
+	if !isMem && len(dsn) > 0 && !strings.HasPrefix(dsn, "file:") {
+		if fi, err := os.Stat(dsn); err == nil && fi.Mode().Perm() != 0600 {
+			_ = os.Chmod(dsn, 0600)
+		}
 	}
 
 	return s, nil
@@ -148,12 +164,17 @@ func (s *Store) migrateBaseline() error {
 	CREATE INDEX IF NOT EXISTS idx_issues_group ON issues_cache(state_group);
 
 	CREATE TABLE IF NOT EXISTS assignment_events (
+		event_id TEXT PRIMARY KEY,
+		issue_id TEXT NOT NULL DEFAULT '',
 		ticket_id TEXT NOT NULL,
+		at_utc TEXT NOT NULL DEFAULT '',
+		kind TEXT NOT NULL DEFAULT 'added',
 		user_id TEXT NOT NULL,
-		recorded_at REAL NOT NULL,
-		PRIMARY KEY (ticket_id, user_id)
+		user_name TEXT NOT NULL DEFAULT '',
+		recorded_at REAL NOT NULL DEFAULT 0
 	);
 	CREATE INDEX IF NOT EXISTS idx_assignment_events_user ON assignment_events(user_id);
+	CREATE INDEX IF NOT EXISTS idx_assignment_events_ticket ON assignment_events(ticket_id);
 
 	CREATE TABLE IF NOT EXISTS user_profile (
 		id TEXT PRIMARY KEY,
@@ -169,7 +190,7 @@ func (s *Store) migrateBaseline() error {
 		identifier TEXT PRIMARY KEY,
 		project_id TEXT NOT NULL,
 		name TEXT NOT NULL,
-		workspace TEXT NOT NULL DEFAULT 'teamprogra',
+		workspace TEXT NOT NULL DEFAULT '',
 		updated_at REAL NOT NULL DEFAULT 0,
 		is_member INTEGER NOT NULL DEFAULT 1,
 		archived INTEGER NOT NULL DEFAULT 0
@@ -258,8 +279,14 @@ func (s *Store) migrateBaseline() error {
 	_, _ = s.db.Exec(`ALTER TABLE issues_cache ADD COLUMN created_by TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.Exec(`ALTER TABLE issues_cache ADD COLUMN remote_updated_at TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_issues_created_by ON issues_cache(created_by)`)
-	_, _ = s.db.Exec(`CREATE TABLE IF NOT EXISTS assignment_events (ticket_id TEXT NOT NULL, user_id TEXT NOT NULL, recorded_at REAL NOT NULL, PRIMARY KEY (ticket_id, user_id))`)
+	_, _ = s.db.Exec(`ALTER TABLE assignment_events ADD COLUMN event_id TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE assignment_events ADD COLUMN issue_id TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE assignment_events ADD COLUMN at_utc TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE assignment_events ADD COLUMN kind TEXT NOT NULL DEFAULT 'added'`)
+	_, _ = s.db.Exec(`ALTER TABLE assignment_events ADD COLUMN user_name TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE assignment_events ADD COLUMN recorded_at REAL NOT NULL DEFAULT 0`)
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_assignment_events_user ON assignment_events(user_id)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_assignment_events_ticket ON assignment_events(ticket_id)`)
 	_, _ = s.db.Exec(`CREATE TABLE IF NOT EXISTS user_profile (id TEXT PRIMARY KEY, username TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '', display_name TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL DEFAULT 0)`)
 	return nil
 }
@@ -411,7 +438,7 @@ func (s *Store) ListIssuesFiltered(ctx context.Context, filter issue.IssueFilter
 		q += ` AND (
 			assignees_json LIKE ?
 			OR created_by = ?
-			OR ticket_id IN (SELECT DISTINCT ticket_id FROM worklogs WHERE author_id = ? OR author_id IS NULL OR author_id = '')
+			OR ticket_id IN (SELECT DISTINCT ticket_id FROM worklogs WHERE author_id = ?)
 			OR ticket_id IN (SELECT DISTINCT ticket_id FROM assignment_events WHERE user_id = ?)
 		)`
 		args = append(args, "%"+filter.InvolvedBy+"%", filter.InvolvedBy, filter.InvolvedBy, filter.InvolvedBy)
@@ -747,13 +774,16 @@ func (s *Store) SaveIssue(ctx context.Context, item *issue.WorkItem) error {
 
 	// Registrar durablemente las asignaciones en assignment_events
 	if item.Key != "" {
+		nowUTC := time.Now().UTC().Format(time.RFC3339)
 		for _, uid := range item.Assignees {
 			if uid != "" {
-				_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO assignment_events (ticket_id, user_id, recorded_at) VALUES (?, ?, ?)`, item.Key, uid, nowUnix)
+				eventID := fmt.Sprintf("%s:%s", item.Key, uid)
+				_, _ = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO assignment_events (event_id, issue_id, ticket_id, at_utc, kind, user_id, user_name, recorded_at) VALUES (?, ?, ?, ?, 'added', ?, '', ?)`, eventID, item.ID, item.Key, nowUTC, uid, nowUnix)
 			}
 		}
 		if item.Assignee != "" && !strings.HasPrefix(item.Assignee, "[") {
-			_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO assignment_events (ticket_id, user_id, recorded_at) VALUES (?, ?, ?)`, item.Key, item.Assignee, nowUnix)
+			eventID := fmt.Sprintf("%s:%s", item.Key, item.Assignee)
+			_, _ = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO assignment_events (event_id, issue_id, ticket_id, at_utc, kind, user_id, user_name, recorded_at) VALUES (?, ?, ?, ?, 'added', ?, '', ?)`, eventID, item.ID, item.Key, nowUTC, item.Assignee, nowUnix)
 		}
 	}
 	return nil
@@ -934,7 +964,39 @@ func (s *Store) DeleteIssue(ctx context.Context, ticketID string) error {
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM worklogs WHERE ticket_id = ?`, ticketID)
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM issue_links WHERE ticket_id = ?`, ticketID)
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM issue_attachments WHERE ticket_id = ?`, ticketID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM assignment_events WHERE ticket_id = ?`, ticketID)
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM focus_sessions WHERE ticket_id = ?`, ticketID)
 	return nil
+}
+
+// GetTicketWorklogs recupera los registros de trabajo locales asociados a un ticket.
+func (s *Store) GetTicketWorklogs(ctx context.Context, ticketID string) ([]issue.WorklogRecord, error) {
+	ticketID = strings.TrimSpace(strings.ToUpper(ticketID))
+	query := `SELECT COALESCE(plane_comment_id, ''), duration_minutes, COALESCE(author_id, '') FROM worklogs WHERE ticket_id = ?`
+	rows, err := s.reader.QueryContext(ctx, query, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := make([]issue.WorklogRecord, 0)
+	for rows.Next() {
+		var r issue.WorklogRecord
+		if err := rows.Scan(&r.PlaneCommentID, &r.DurationMinutes, &r.AuthorID); err != nil {
+			return nil, err
+		}
+		list = append(list, r)
+	}
+	return list, nil
+}
+
+// CountPendingOutbox cuenta comentarios o mutaciones pendientes o fallidas en outbox para un ticket.
+func (s *Store) CountPendingOutbox(ctx context.Context, ticketRef string) (int, error) {
+	ticketRef = strings.TrimSpace(strings.ToUpper(ticketRef))
+	var count int
+	query := `SELECT COUNT(*) FROM outbox WHERE (UPPER(ticket_ref) = ? OR UPPER(client_id) = ?) AND state IN ('pending', 'failed')`
+	err := s.reader.QueryRowContext(ctx, query, ticketRef, ticketRef).Scan(&count)
+	return count, err
 }
 
 // AddLink asocia un enlace externo o PR a una tarea en SQLite.
@@ -1323,7 +1385,10 @@ func (s *Store) RecordAssignmentEvent(ctx context.Context, ticketID, userID stri
 	if ticketID == "" || userID == "" {
 		return nil
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO assignment_events (ticket_id, user_id, recorded_at) VALUES (?, ?, ?)`, ticketID, userID, float64(time.Now().Unix()))
+	eventID := fmt.Sprintf("%s:%s", ticketID, userID)
+	nowUTC := time.Now().UTC().Format(time.RFC3339)
+	nowUnix := float64(time.Now().Unix())
+	_, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO assignment_events (event_id, issue_id, ticket_id, at_utc, kind, user_id, user_name, recorded_at) VALUES (?, '', ?, ?, 'added', ?, '', ?)`, eventID, ticketID, nowUTC, userID, nowUnix)
 	return err
 }
 

@@ -33,7 +33,7 @@ func TestAdversarial_NetworkAndProtocolFailures(t *testing.T) {
 		cfg := tracker_plane.Config{
 			BaseURL:   server.URL,
 			APIKey:    "test-key",
-			Workspace: "teamprogra",
+			Workspace: "test-workspace",
 			Timeout:   30 * time.Millisecond, // Timeout agresivo
 		}
 		client := tracker_plane.NewClient(cfg)
@@ -57,7 +57,7 @@ func TestAdversarial_NetworkAndProtocolFailures(t *testing.T) {
 		cfg := tracker_plane.Config{
 			BaseURL:   server.URL,
 			APIKey:    "test-key",
-			Workspace: "teamprogra",
+			Workspace: "test-workspace",
 			Timeout:   2 * time.Second,
 		}
 		client := tracker_plane.NewClient(cfg)
@@ -99,7 +99,7 @@ func TestAdversarial_NetworkAndProtocolFailures(t *testing.T) {
 				cfg := tracker_plane.Config{
 					BaseURL:   server.URL,
 					APIKey:    "test-key",
-					Workspace: "teamprogra",
+					Workspace: "test-workspace",
 					Timeout:   1 * time.Second,
 				}
 				client := tracker_plane.NewClient(cfg)
@@ -118,7 +118,7 @@ func TestAdversarial_NetworkAndProtocolFailures(t *testing.T) {
 				}
 
 				// 3. SendCommentRaw
-				_, err = client.SendCommentRaw(ctx, "teamprogra", "proj-1", "iss-1", `{"comment_html":"<p>test</p>"}`)
+				_, err = client.SendCommentRaw(ctx, "test-workspace", "proj-1", "iss-1", `{"comment_html":"<p>test</p>"}`)
 				if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("%d", tc.code)) {
 					t.Errorf("SendCommentRaw: esperado error con código %d, obtuvo: %v", tc.code, err)
 				}
@@ -160,7 +160,7 @@ func TestAdversarial_NetworkAndProtocolFailures(t *testing.T) {
 		cfg := tracker_plane.Config{
 			BaseURL:   server.URL,
 			APIKey:    "test-key",
-			Workspace: "teamprogra",
+			Workspace: "test-workspace",
 			Timeout:   1 * time.Second,
 		}
 		client := tracker_plane.NewClient(cfg)
@@ -193,7 +193,7 @@ func TestAdversarial_NetworkAndProtocolFailures(t *testing.T) {
 				cfg := tracker_plane.Config{
 					BaseURL:   server.URL,
 					APIKey:    "test-key",
-					Workspace: "teamprogra",
+					Workspace: "test-workspace",
 					Timeout:   1 * time.Second,
 				}
 				client := tracker_plane.NewClient(cfg)
@@ -222,7 +222,7 @@ func TestAdversarial_ChaoticPlanePayloads(t *testing.T) {
 		cfg := tracker_plane.Config{
 			BaseURL:   server.URL,
 			APIKey:    "test-key",
-			Workspace: "teamprogra",
+			Workspace: "test-workspace",
 			Timeout:   1 * time.Second,
 		}
 		client := tracker_plane.NewClient(cfg)
@@ -298,7 +298,7 @@ func TestAdversarial_ChaoticPlanePayloads(t *testing.T) {
 		cfg := tracker_plane.Config{
 			BaseURL:   server.URL,
 			APIKey:    "test-key",
-			Workspace: "teamprogra",
+			Workspace: "test-workspace",
 			Timeout:   1 * time.Second,
 		}
 		client := tracker_plane.NewClient(cfg)
@@ -351,7 +351,7 @@ func TestAdversarial_ChaoticPlanePayloads(t *testing.T) {
 		cfg := tracker_plane.Config{
 			BaseURL:   server.URL,
 			APIKey:    "test-key",
-			Workspace: "teamprogra",
+			Workspace: "test-workspace",
 			Timeout:   1 * time.Second,
 		}
 		client := tracker_plane.NewClient(cfg)
@@ -398,7 +398,7 @@ func TestAdversarial_ChaoticPlanePayloads(t *testing.T) {
 		cfg := tracker_plane.Config{
 			BaseURL:   server.URL,
 			APIKey:    "test-key",
-			Workspace: "teamprogra",
+			Workspace: "test-workspace",
 			Timeout:   1 * time.Second,
 		}
 		client := tracker_plane.NewClient(cfg)
@@ -434,7 +434,7 @@ func TestAdversarial_ChaoticPlanePayloads(t *testing.T) {
 		cfg := tracker_plane.Config{
 			BaseURL:   server.URL,
 			APIKey:    "test-key",
-			Workspace: "teamprogra",
+			Workspace: "test-workspace",
 			Timeout:   1 * time.Second,
 		}
 		client := tracker_plane.NewClient(cfg)
@@ -484,7 +484,7 @@ func TestAdversarial_StressAndRaceDetector(t *testing.T) {
 	cfg := tracker_plane.Config{
 		BaseURL:   server.URL,
 		APIKey:    "stress-token",
-		Workspace: "teamprogra",
+		Workspace: "test-workspace",
 		Timeout:   3 * time.Second,
 	}
 	client := tracker_plane.NewClient(cfg)

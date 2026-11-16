@@ -109,6 +109,21 @@ type Link struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// WorklogRecord modela un registro resumido de tiempo asociado a un ticket para comprobaciones de integridad.
+type WorklogRecord struct {
+	PlaneCommentID  string `json:"plane_comment_id,omitempty"`
+	DurationMinutes int    `json:"duration_minutes"`
+	AuthorID        string `json:"author_id,omitempty"`
+}
+
+// CommentRecord representa un comentario remoto leído desde el tracker.
+type CommentRecord struct {
+	ID          string `json:"id"`
+	CommentHTML string `json:"comment_html"`
+	Actor       string `json:"actor,omitempty"`
+	CreatedBy   string `json:"created_by,omitempty"`
+}
+
 // Attachment modela un archivo adjunto subido a Plane CE.
 type Attachment struct {
 	ID        string    `json:"id"`

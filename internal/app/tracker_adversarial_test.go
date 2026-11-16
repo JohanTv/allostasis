@@ -70,8 +70,8 @@ func (m *mockAdversarialTrackerClient) FetchProjects(ctx context.Context) ([]iss
 		return nil, fmt.Errorf("error de red: dial tcp plane:8000: connection refused")
 	}
 	return []issue.ProjectRecord{
-		{Identifier: "OMNIFY", ProjectID: "proj-uuid-omnify", Name: "Omnify Core", Workspace: "teamprogra"},
-		{Identifier: "OPS", ProjectID: "proj-uuid-ops", Name: "Operations", Workspace: "teamprogra"},
+		{Identifier: "OMNIFY", ProjectID: "proj-uuid-omnify", Name: "Omnify Core", Workspace: "test-workspace"},
+		{Identifier: "OPS", ProjectID: "proj-uuid-ops", Name: "Operations", Workspace: "test-workspace"},
 	}, nil
 }
 
@@ -158,6 +158,15 @@ func (m *mockAdversarialTrackerClient) DeleteIssueRemote(ctx context.Context, pr
 		return fmt.Errorf("Plane CE offline")
 	}
 	return nil
+}
+
+func (m *mockAdversarialTrackerClient) FetchComments(ctx context.Context, projectID, issueID string) ([]issue.CommentRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.isOnline {
+		return nil, fmt.Errorf("Plane CE offline")
+	}
+	return nil, nil
 }
 
 func (m *mockAdversarialTrackerClient) SendCommentRaw(ctx context.Context, targetWS, projectID, issueID, payloadJSON string) (string, error) {
@@ -276,12 +285,12 @@ func TestAdversarial_OfflineOutboxReconciliation_FullCycle(t *testing.T) {
 
 	// 2. Asociar comentarios y worklogs mientras seguimos offline
 	commentPayload1 := `{"comment_html":"<p>Bitácora de inicio en task1</p>"}`
-	if err := store.EnqueueOutbox(ctx, "client-c1", task1.Key, commentPayload1, "teamprogra"); err != nil {
+	if err := store.EnqueueOutbox(ctx, "client-c1", task1.Key, commentPayload1, "test-workspace"); err != nil {
 		t.Fatalf("error encolando comentario 1: %v", err)
 	}
 
 	commentPayload2 := `{"comment_html":"<p>Progreso adversarial verificado en task2</p>"}`
-	if err := store.EnqueueOutbox(ctx, "client-c2", task2.Key, commentPayload2, "teamprogra"); err != nil {
+	if err := store.EnqueueOutbox(ctx, "client-c2", task2.Key, commentPayload2, "test-workspace"); err != nil {
 		t.Fatalf("error encolando comentario 2: %v", err)
 	}
 
@@ -711,7 +720,7 @@ func (m *mockChaosTrackerClient) AddProjectWithData(identifier, name string, iss
 		Identifier: identifier,
 		ProjectID:  projID,
 		Name:       name,
-		Workspace:  "teamprogra",
+		Workspace:  "test-workspace",
 	})
 
 	stateBacklogID := fmt.Sprintf("st-backlog-%s", strings.ToLower(identifier))

@@ -5,11 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/allostasis/alo/internal/domain/issue"
+)
+
+var (
+	ticketRefRegex   = regexp.MustCompile(`^(?:[A-Za-z0-9_]+-\d+|[0-9a-fA-F-]{36})$`)
+	worklogMetaRegex = regexp.MustCompile(`<!--\s*PLANE_WORKLOG_METADATA\s*([\s\S]*?)\s*-->`)
+	sessionRegex     = regexp.MustCompile(`\*\*Sesión\*\*\s*\|\s*(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})`)
 )
 
 // TrackerService orquesta la gestión soberana de tareas (local-first con sincronización upstream).
@@ -758,36 +765,197 @@ func (s *TrackerService) Labels(ctx context.Context, projectKey string, refresh 
 	return s.store.ListLabels(ctx, projectID)
 }
 
-// Delete elimina una tarea verificando salvaguardas (--yes y descarte de horas).
+type parsedCommentWorklog struct {
+	id      string
+	minutes int
+	author  string
+}
+
+func parseCommentWorklogs(comments []issue.CommentRecord) []parsedCommentWorklog {
+	var worklogs []parsedCommentWorklog
+	for _, c := range comments {
+		html := c.CommentHTML
+		author := c.CreatedBy
+		if author == "" {
+			author = c.Actor
+		}
+
+		isWorklog := false
+		minutes := 0
+
+		if strings.Contains(html, "PLANE_WORKLOG_METADATA") {
+			isWorklog = true
+			if match := worklogMetaRegex.FindStringSubmatch(html); len(match) > 1 {
+				var meta struct {
+					DurationMinutes    *int   `json:"duration_minutes"`
+					DurationNetMinutes *int   `json:"duration_net_minutes"`
+					StartTime          string `json:"start_time"`
+					EndTime            string `json:"end_time"`
+				}
+				if err := json.Unmarshal([]byte(strings.TrimSpace(match[1])), &meta); err == nil {
+					if meta.DurationMinutes != nil && *meta.DurationMinutes > 0 {
+						minutes = *meta.DurationMinutes
+					} else if meta.DurationNetMinutes != nil && *meta.DurationNetMinutes > 0 {
+						minutes = *meta.DurationNetMinutes
+					} else if meta.StartTime != "" && meta.EndTime != "" {
+						t1, err1 := time.Parse("15:04", meta.StartTime)
+						t2, err2 := time.Parse("15:04", meta.EndTime)
+						if err1 == nil && err2 == nil {
+							diff := int(t2.Sub(t1).Minutes())
+							if diff < 0 {
+								diff += 24 * 60
+							}
+							minutes = diff
+						}
+					}
+				}
+			}
+		} else if strings.Contains(html, "**Fecha**") && strings.Contains(html, "**Sesión**") {
+			isWorklog = true
+			if match := sessionRegex.FindStringSubmatch(html); len(match) > 2 {
+				t1, err1 := time.Parse("15:04", match[1])
+				t2, err2 := time.Parse("15:04", match[2])
+				if err1 == nil && err2 == nil {
+					diff := int(t2.Sub(t1).Minutes())
+					if diff < 0 {
+						diff += 24 * 60
+					}
+					minutes = diff
+				}
+			}
+		}
+
+		if isWorklog {
+			worklogs = append(worklogs, parsedCommentWorklog{
+				id:      c.ID,
+				minutes: minutes,
+				author:  author,
+			})
+		}
+	}
+	return worklogs
+}
+
+// Delete elimina una tarea verificando rigurosamente las salvaguardas contra destrucción de horas (ADR 0018).
 func (s *TrackerService) Delete(ctx context.Context, key string, yes, discardWorklogs bool) (map[string]interface{}, error) {
 	key = strings.TrimSpace(strings.ToUpper(key))
+	if !ticketRefRegex.MatchString(key) {
+		return nil, fmt.Errorf("Error: delete exige el ticket completo (PREFIJO-N o UUID); no acepta '@', '.', números sueltos ni la rama de Git.")
+	}
+
 	item, err := s.store.GetIssue(ctx, key)
 	if err != nil {
 		return nil, err
 	}
+	if item == nil {
+		return nil, fmt.Errorf("Error: %s no existe en Plane y no hay nada local que limpiar.", key)
+	}
 
-	res := map[string]interface{}{
-		"ticket_id": key,
-		"title":     item.Title,
+	// 1. Verificar cola de salida (Outbox) pendiente
+	pending, err := s.store.CountPendingOutbox(ctx, key)
+	if err == nil && pending > 0 {
+		return nil, fmt.Errorf("Error: %s tiene %d comentario(s) sin publicar en la cola de salida; publícalos (alo sync) o descártalos antes de eliminarlo.", key, pending)
+	}
+
+	// 2. Leer comentarios remotos si el ticket existe en Plane
+	var remoteComments []issue.CommentRecord
+	if s.client != nil && item.ProjectID != "" && item.ID != "" && !strings.HasPrefix(item.ID, "local-") {
+		comments, err := s.client.FetchComments(ctx, item.ProjectID, item.ID)
+		if err != nil {
+			return nil, fmt.Errorf("Error: no se pudieron leer los comentarios de Plane (%w); no se elimina nada.", err)
+		}
+		remoteComments = comments
+	}
+
+	// 3. Inspeccionar worklogs remotos y locales
+	foundRemoteWorklogs := parseCommentWorklogs(remoteComments)
+	localWorklogs, _ := s.store.GetTicketWorklogs(ctx, key)
+
+	actorUUID, _ := s.ResolveCurrentUserID(ctx)
+
+	remoteIDs := make(map[string]bool)
+	var mine []parsedCommentWorklog
+	var foreignRemote []parsedCommentWorklog
+	for _, rw := range foundRemoteWorklogs {
+		remoteIDs[rw.id] = true
+		if actorUUID != "" && rw.author == actorUUID {
+			mine = append(mine, rw)
+		} else {
+			foreignRemote = append(foreignRemote, rw)
+		}
+	}
+
+	var ownLocal []issue.WorklogRecord
+	var foreignLocal []issue.WorklogRecord
+	var localOnly []issue.WorklogRecord
+	for _, lw := range localWorklogs {
+		if !remoteIDs[lw.PlaneCommentID] {
+			localOnly = append(localOnly, lw)
+			// Una fila local sin autor registrado se trata como propia (se creó en esta máquina); con autor, solo si es el actor confirmado.
+			if lw.AuthorID == "" || (actorUUID != "" && lw.AuthorID == actorUUID) {
+				ownLocal = append(ownLocal, lw)
+			} else {
+				foreignLocal = append(foreignLocal, lw)
+			}
+		}
+	}
+
+	hoursOwn := len(mine) + len(ownLocal)
+	hoursForeign := len(foreignRemote) + len(foreignLocal)
+	hoursLocalOnly := len(localOnly)
+	ownMinutes := 0
+	for _, m := range mine {
+		ownMinutes += m.minutes
+	}
+	for _, l := range ownLocal {
+		ownMinutes += l.DurationMinutes
+	}
+
+	summary := map[string]interface{}{
+		"ticket_id":        key,
+		"title":            item.Title,
+		"comments":         len(remoteComments),
+		"hours_own":        hoursOwn,
+		"hours_foreign":    hoursForeign,
+		"hours_local_only": hoursLocalOnly,
+		"own_minutes":      ownMinutes,
+	}
+
+	// 4. Salvaguardas fail-closed
+	if hoursForeign > 0 {
+		hint := ""
+		if actorUUID == "" {
+			hint = " (sin usuario autenticado no se puede confirmar quién las registró)"
+		}
+		return nil, fmt.Errorf("Error: %s tiene %d registro(s) de horas de otra persona o de autor no confirmado%s; eliminarlo destruiría su trabajo y no se permite. Conserva el ticket: alo ticket update %s --state Cancelado", key, hoursForeign, hint, key)
+	}
+
+	if hoursOwn > 0 && !discardWorklogs {
+		return nil, fmt.Errorf("Error: %s tiene %d registro(s) de horas tuyas (%d min); eliminar el ticket las destruiría y las horas son trabajo real. Conserva el ticket: alo ticket update %s --state Cancelado. Si de verdad quieres perderlas: alo ticket delete %s --yes --discard-worklogs", key, hoursOwn, ownMinutes, key, key)
 	}
 
 	if !yes {
-		res["status"] = "dry_run"
-		res["message"] = "Para confirmar la eliminación permanente incluye la bandera --yes"
-		return res, nil
+		summary["status"] = "dry_run"
+		summary["message"] = "Para confirmar la eliminación permanente incluye la bandera --yes"
+		return summary, nil
 	}
 
-	// 1. Eliminar remotamente en Plane CE si existe
+	// 5. Eliminar en Plane CE (si aplica)
 	if s.client != nil && item.ProjectID != "" && item.ID != "" && !strings.HasPrefix(item.ID, "local-") {
-		_ = s.client.DeleteIssueRemote(ctx, item.ProjectID, item.ID)
+		if err := s.client.DeleteIssueRemote(ctx, item.ProjectID, item.ID); err != nil {
+			return nil, fmt.Errorf("error al eliminar ticket en Plane CE: %w", err)
+		}
 	}
 
-	// 2. Eliminar localmente en SQLite
-	_ = s.store.DeleteIssue(ctx, key)
+	// 6. Limpieza soberana en SQLite
+	if err := s.store.DeleteIssue(ctx, key); err != nil {
+		return nil, fmt.Errorf("error al limpiar ticket local: %w", err)
+	}
 
-	res["status"] = "deleted"
-	res["message"] = fmt.Sprintf("Tarea %s eliminada exitosamente", key)
-	return res, nil
+	summary["status"] = "deleted"
+	summary["hours_discarded"] = hoursOwn
+	summary["message"] = fmt.Sprintf("Tarea %s eliminada exitosamente", key)
+	return summary, nil
 }
 
 // AddLink asocia un hipervínculo a una tarea.
