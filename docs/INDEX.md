@@ -40,6 +40,7 @@
 ## 3. Principles & Operational References
 
 - 🧭 [**Design Principles of Allostasis**](principles.md): Fundamentos ontológicos y principios rectores del producto (P1 a P5, Ley de Little, Medida de Lebesgue de Klee).
+- 🎨 [**Identidad Visual y Prompts Generativos**](brand/identity-and-prompts.md): Fundamentos semióticos, tokens cromáticos y especificaciones de prompts de IA para Banana Pro/FLUX.1.
 - 📚 [**Suite de Referencias y Gobernanza Operativa**](references/README.md):
   - [Protocolo de Living Tickets y Fases del SDLC](references/PROTOCOLO_LIVING_TICKETS_Y_SDLC.md)
   - [Protocolo de Relevo Asíncrono de Tareas (Task Handoff)](references/PROTOCOLO_RELEVO_ASINCRONO_HANDOFF.md)

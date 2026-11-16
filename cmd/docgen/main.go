@@ -397,6 +397,7 @@ func RenderIndex(items []DocItem) string {
 	// 3. Principles & References
 	buf.WriteString("## 3. Principles & Operational References\n\n")
 	buf.WriteString("- 🧭 [**Design Principles of Allostasis**](principles.md): Fundamentos ontológicos y principios rectores del producto (P1 a P5, Ley de Little, Medida de Lebesgue de Klee).\n")
+	buf.WriteString("- 🎨 [**Identidad Visual y Prompts Generativos**](brand/identity-and-prompts.md): Fundamentos semióticos, tokens cromáticos y especificaciones de prompts de IA para Banana Pro/FLUX.1.\n")
 	buf.WriteString("- 📚 [**Suite de Referencias y Gobernanza Operativa**](references/README.md):\n")
 	buf.WriteString("  - [Protocolo de Living Tickets y Fases del SDLC](references/PROTOCOLO_LIVING_TICKETS_Y_SDLC.md)\n")
 	buf.WriteString("  - [Protocolo de Relevo Asíncrono de Tareas (Task Handoff)](references/PROTOCOLO_RELEVO_ASINCRONO_HANDOFF.md)\n")
