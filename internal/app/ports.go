@@ -72,6 +72,10 @@ type IssueStore interface {
 	GetUserProfile(ctx context.Context) (*issue.UserInfo, error)
 	RecordAssignmentEvent(ctx context.Context, ticketID, userID string) error
 	GetAssignmentEvents(ctx context.Context, ticketID string) ([]issue.AssignmentEvent, error)
+
+	// Marcas de Agua y Sincronización Delta (ADR 0028 / RFC 0027)
+	GetWatermark(ctx context.Context, domain, projectID string) (*issue.SyncWatermark, error)
+	SetWatermark(ctx context.Context, wm issue.SyncWatermark) error
 }
 
 // WorklogStore define el contrato para el ledger soberano de tiempo e intervalos.
@@ -100,6 +104,7 @@ type RemoteTrackerClient interface {
 	FetchStates(ctx context.Context, projectID string) ([]issue.StateRecord, error)
 	FetchLabels(ctx context.Context, projectID string) ([]issue.Label, error)
 	FetchIssues(ctx context.Context, projectID, projectKey string, limit int) ([]issue.IssueSnapshot, error)
+	FetchIssuesDelta(ctx context.Context, projectID, projectKey string, limit int, cutoffISO string, deep bool) ([]issue.IssueSnapshot, string, error)
 	CreateIssueRemote(ctx context.Context, projectID string, input issue.CreateIssueInput, stateID string) (*issue.WorkItem, error)
 	UpdateIssueRemote(ctx context.Context, projectID, issueID string, input issue.UpdateIssueInput, stateID string) error
 	DeleteIssueRemote(ctx context.Context, projectID, issueID string) error

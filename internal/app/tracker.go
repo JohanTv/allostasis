@@ -318,37 +318,16 @@ func (s *TrackerService) SyncCatalogs(ctx context.Context, projectKey string) er
 	return nil
 }
 
-// SyncIssues descarga las tareas de un proyecto y las sincroniza en caché y snapshots.
-func (s *TrackerService) SyncIssues(ctx context.Context, projectKey string, limit int) (int, error) {
+// SyncIssuesDelta descarga las tareas de un proyecto aplicando soporte de parada temprana por marca de agua (cutoffISO).
+func (s *TrackerService) SyncIssuesDelta(ctx context.Context, projectID, projectKey string, limit int, cutoffISO string, deep bool) (int, string, int, error) {
 	if s.client == nil {
-		return 0, fmt.Errorf("cliente de tracker remoto no configurado")
-	}
-	projectKey = strings.ToUpper(strings.TrimSpace(projectKey))
-	var projectID string
-	if s.store != nil {
-		if pRec, err := s.store.GetProject(ctx, projectKey); err == nil && pRec != nil {
-			projectID = pRec.ProjectID
-		}
-	}
-	if projectID == "" {
-		projects, err := s.SyncProjects(ctx)
-		if err != nil {
-			return 0, fmt.Errorf("no se pudo resolver proyecto %s: %w", projectKey, err)
-		}
-		for _, p := range projects {
-			if p.Identifier == projectKey {
-				projectID = p.ProjectID
-				break
-			}
-		}
-	}
-	if projectID == "" {
-		return 0, fmt.Errorf("proyecto %s no encontrado en Plane", projectKey)
+		return 0, "", 0, fmt.Errorf("cliente de tracker remoto no configurado")
 	}
 
 	var (
 		states    []issue.StateRecord
 		snapshots []issue.IssueSnapshot
+		newestUp  string
 		fetchErr  error
 		wg        sync.WaitGroup
 	)
@@ -364,12 +343,12 @@ func (s *TrackerService) SyncIssues(ctx context.Context, projectKey string, limi
 	}()
 	go func() {
 		defer wg.Done()
-		snapshots, fetchErr = s.client.FetchIssues(ctx, projectID, projectKey, limit)
+		snapshots, newestUp, fetchErr = s.client.FetchIssuesDelta(ctx, projectID, projectKey, limit, cutoffISO, deep)
 	}()
 	wg.Wait()
 
 	if fetchErr != nil {
-		return 0, fetchErr
+		return 0, newestUp, 0, fetchErr
 	}
 
 	stateMap := make(map[string]issue.StateRecord, len(states))
@@ -398,7 +377,68 @@ func (s *TrackerService) SyncIssues(ctx context.Context, projectKey string, limi
 			}
 		}
 	}
-	return syncedCount, nil
+	pagesFetched := 1
+	if len(snapshots) > 100 {
+		pagesFetched = (len(snapshots) + 99) / 100
+	}
+	return syncedCount, newestUp, pagesFetched, nil
+}
+
+// SyncIssues descarga las tareas de un proyecto y las sincroniza en caché y snapshots.
+func (s *TrackerService) SyncIssues(ctx context.Context, projectKey string, limit int) (int, error) {
+	if s.client == nil {
+		return 0, fmt.Errorf("cliente de tracker remoto no configurado")
+	}
+	projectKey = strings.ToUpper(strings.TrimSpace(projectKey))
+	var projectID string
+	if s.store != nil {
+		if pRec, err := s.store.GetProject(ctx, projectKey); err == nil && pRec != nil && pRec.ProjectID != "" {
+			projectID = pRec.ProjectID
+		}
+	}
+	if projectID == "" {
+		projects, err := s.SyncProjects(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("no se pudo resolver proyecto %s: %w", projectKey, err)
+		}
+		for _, p := range projects {
+			if p.Identifier == projectKey {
+				projectID = p.ProjectID
+				break
+			}
+		}
+	}
+	if projectID == "" {
+		return 0, fmt.Errorf("proyecto %s no encontrado en Plane", projectKey)
+	}
+
+	cutoffISO := ""
+	if s.store != nil {
+		if wm, err := s.store.GetWatermark(ctx, "issues", projectID); err == nil && wm != nil {
+			cutoffISO = wm.ServerHighWatermark
+		}
+	}
+
+	projStart := time.Now()
+	count, newest, pages, err := s.SyncIssuesDelta(ctx, projectID, projectKey, limit, cutoffISO, false)
+	if err == nil && s.store != nil {
+		highWM := newest
+		if highWM == "" {
+			highWM = cutoffISO
+		}
+		_ = s.store.SetWatermark(ctx, issue.SyncWatermark{
+			Domain:              "issues",
+			ProjectID:           projectID,
+			LastSyncTimestamp:   float64(time.Now().Unix()),
+			ServerHighWatermark: highWM,
+			Status:              "synced",
+			ItemsSynced:         count,
+			PagesFetched:        pages,
+			DurationMs:          time.Since(projStart).Milliseconds(),
+			UpdatedAt:           time.Now(),
+		})
+	}
+	return count, err
 }
 
 // Sync sincroniza proyectos, estados y tareas desde Plane CE hacia la base de datos local.
@@ -473,6 +513,176 @@ func (s *TrackerService) Sync(ctx context.Context, projectKey string, allProject
 	}
 
 	return totalSynced, nil
+}
+
+// SyncUnified orquesta la sincronización soberana y unificada según el target solicitado (ADR 0028 / RFC 0027).
+func (s *TrackerService) SyncUnified(ctx context.Context, opts issue.SyncUnifiedOptions) (*issue.SyncUnifiedReport, error) {
+	startTime := time.Now()
+	target := strings.ToLower(strings.TrimSpace(opts.Target))
+	if target == "" {
+		target = "all"
+	}
+
+	report := &issue.SyncUnifiedReport{
+		Status:     "synced",
+		Target:     target,
+		Watermarks: make(map[string]string),
+	}
+
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+
+	// 1. Fase PUSH: Drenaje de Outbox (para target "all" o "outbox")
+	if target == "all" || target == "outbox" {
+		outboxRep, err := s.FlushOutbox(ctx, limit)
+		if err != nil {
+			report.Errors = append(report.Errors, fmt.Sprintf("flush outbox: %v", err))
+		}
+		if outboxRep != nil {
+			report.SentComments += outboxRep.SentComments
+			report.FailedComments += outboxRep.FailedComments
+			report.Errors = append(report.Errors, outboxRep.Errors...)
+		}
+		if target == "outbox" {
+			report.DurationMs = time.Since(startTime).Milliseconds()
+			if len(report.Errors) > 0 {
+				report.Status = "partial_success"
+			}
+			return report, nil
+		}
+	}
+
+	// 2. Fase CATÁLOGOS: Proyectos, Estados y Etiquetas (para target "all" o "catalogs")
+	var projects []issue.ProjectRecord
+	if target == "all" || target == "catalogs" {
+		projs, err := s.SyncProjects(ctx)
+		if err != nil {
+			report.Errors = append(report.Errors, fmt.Sprintf("sync projects: %v", err))
+		} else {
+			projects = projs
+			report.SyncedProjects = len(projs)
+			report.SyncedCatalogs = true
+			// Sincronizar estados y etiquetas de cada proyecto
+			for _, p := range projs {
+				_, _ = s.SyncStates(ctx, p.ProjectID)
+				_, _ = s.SyncLabels(ctx, p.ProjectID)
+			}
+		}
+		if target == "catalogs" {
+			report.DurationMs = time.Since(startTime).Milliseconds()
+			report.Status = "catalogs_synced"
+			if len(report.Errors) > 0 {
+				report.Status = "partial_success"
+			}
+			return report, nil
+		}
+	}
+
+	// 3. Fase TICKETS: Delta Pull con Marcas de Agua (para target "all", "tickets", "issues")
+	if target == "all" || target == "tickets" || target == "issues" {
+		var targetProjects []issue.ProjectRecord
+		if opts.ProjectKey != "" {
+			targetKey := strings.ToUpper(strings.TrimSpace(opts.ProjectKey))
+			var pID string
+			if s.store != nil {
+				if pRec, err := s.store.GetProject(ctx, targetKey); err == nil && pRec != nil && pRec.ProjectID != "" {
+					pID = pRec.ProjectID
+				}
+			}
+			if pID == "" {
+				if len(projects) == 0 {
+					projects, _ = s.SyncProjects(ctx)
+				}
+				for _, p := range projects {
+					if p.Identifier == targetKey {
+						pID = p.ProjectID
+						break
+					}
+				}
+			}
+			if pID != "" {
+				targetProjects = append(targetProjects, issue.ProjectRecord{Identifier: targetKey, ProjectID: pID})
+			} else {
+				report.Errors = append(report.Errors, fmt.Sprintf("proyecto %s no encontrado", targetKey))
+			}
+		} else if opts.AllProjects {
+			if len(projects) == 0 {
+				projects, _ = s.SyncProjects(ctx)
+			}
+			targetProjects = projects
+		} else {
+			// Por defecto: todos los proyectos registrados o el primero disponible
+			if len(projects) == 0 {
+				projects, _ = s.SyncProjects(ctx)
+			}
+			if len(projects) > 0 {
+				targetProjects = projects
+			}
+		}
+
+		for _, p := range targetProjects {
+			cutoffISO := ""
+			if !opts.Deep && s.store != nil {
+				if wm, err := s.store.GetWatermark(ctx, "issues", p.ProjectID); err == nil && wm != nil {
+					cutoffISO = wm.ServerHighWatermark
+				}
+			}
+
+			projStart := time.Now()
+			synced, newestUp, pages, err := s.SyncIssuesDelta(ctx, p.ProjectID, p.Identifier, limit, cutoffISO, opts.Deep)
+			if err != nil {
+				report.Errors = append(report.Errors, fmt.Sprintf("sync issues %s: %v", p.Identifier, err))
+				continue
+			}
+
+			report.SyncedIssues += synced
+			highWM := newestUp
+			if highWM == "" {
+				highWM = cutoffISO
+			}
+			report.Watermarks[p.Identifier] = highWM
+
+			if s.store != nil {
+				_ = s.store.SetWatermark(ctx, issue.SyncWatermark{
+					Domain:              "issues",
+					ProjectID:           p.ProjectID,
+					LastSyncTimestamp:   float64(time.Now().Unix()),
+					ServerHighWatermark: highWM,
+					Status:              "synced",
+					ItemsSynced:         synced,
+					PagesFetched:        pages,
+					DurationMs:          time.Since(projStart).Milliseconds(),
+					UpdatedAt:           time.Now(),
+				})
+			}
+		}
+	}
+
+	// 4. Fase HOURS / WORKLOGS
+	if target == "hours" || target == "worklogs" {
+		outboxRep, err := s.FlushOutbox(ctx, limit)
+		if err != nil {
+			report.Errors = append(report.Errors, fmt.Sprintf("flush worklogs: %v", err))
+		}
+		if outboxRep != nil {
+			report.SentComments += outboxRep.SentComments
+			report.FailedComments += outboxRep.FailedComments
+			report.Errors = append(report.Errors, outboxRep.Errors...)
+		}
+	}
+
+	report.DurationMs = time.Since(startTime).Milliseconds()
+	if len(report.Errors) > 0 {
+		if report.SyncedIssues > 0 || report.SentComments > 0 || report.SyncedCatalogs {
+			report.Status = "partial_success"
+		} else {
+			report.Status = "failed"
+		}
+	}
+
+	return report, nil
 }
 
 // isCreateIssueMutation determina si un registro del outbox corresponde a la creación diferida de una tarea.

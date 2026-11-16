@@ -431,3 +431,61 @@ func TestStore_CommentsSnapshot_And_AssignmentEvents(t *testing.T) {
 		t.Fatalf("se esperaban 2 eventos de asignación, obtenidos: %d", len(events))
 	}
 }
+
+func TestStore_SyncWatermarks(t *testing.T) {
+	store, err := sqlite.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("error abriendo store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// 1. GetWatermark en frío retorna nil sin error
+	wm, err := store.GetWatermark(ctx, "issues", "proj-omnify")
+	if err != nil {
+		t.Fatalf("error GetWatermark en frío: %v", err)
+	}
+	if wm != nil {
+		t.Errorf("se esperaba watermark nulo en frío, obtenido: %+v", wm)
+	}
+
+	// 2. SetWatermark y verificación
+	initialWM := issue.SyncWatermark{
+		Domain:              "issues",
+		ProjectID:           "proj-omnify",
+		LastSyncTimestamp:   1700000000.0,
+		ServerHighWatermark: "2026-11-16T15:00:00Z",
+		Status:              "synced",
+		ItemsSynced:         42,
+		PagesFetched:        1,
+		DurationMs:          150,
+	}
+	if err := store.SetWatermark(ctx, initialWM); err != nil {
+		t.Fatalf("error SetWatermark: %v", err)
+	}
+
+	loadedWM, err := store.GetWatermark(ctx, "issues", "proj-omnify")
+	if err != nil || loadedWM == nil {
+		t.Fatalf("error recuperando watermark: %v", err)
+	}
+	if loadedWM.ServerHighWatermark != "2026-11-16T15:00:00Z" || loadedWM.ItemsSynced != 42 {
+		t.Errorf("datos de watermark no coinciden: %+v", loadedWM)
+	}
+
+	// 3. Upsert idempotente de marca de agua
+	updatedWM := initialWM
+	updatedWM.ServerHighWatermark = "2026-11-16T17:30:00Z"
+	updatedWM.ItemsSynced = 55
+	if err := store.SetWatermark(ctx, updatedWM); err != nil {
+		t.Fatalf("error actualizando watermark: %v", err)
+	}
+
+	reloadedWM, err := store.GetWatermark(ctx, "issues", "proj-omnify")
+	if err != nil || reloadedWM == nil {
+		t.Fatalf("error re-cargando watermark: %v", err)
+	}
+	if reloadedWM.ServerHighWatermark != "2026-11-16T17:30:00Z" || reloadedWM.ItemsSynced != 55 {
+		t.Errorf("upsert de watermark falló: %+v", reloadedWM)
+	}
+}

@@ -55,7 +55,7 @@ func initTrackerService() (*app.TrackerService, *sqlite.Store, error) {
 	}
 
 	planeCfg := tracker_plane.LoadConfigFromEnv()
-	var client *tracker_plane.Client
+	var client app.RemoteTrackerClient
 	if planeCfg.APIKey != "" {
 		client = tracker_plane.NewClient(planeCfg)
 	}

@@ -96,6 +96,14 @@ func (m *mockTrackerClient) FetchIssues(ctx context.Context, projectID, projectK
 		},
 	}, nil
 }
+func (m *mockTrackerClient) FetchIssuesDelta(ctx context.Context, projectID, projectKey string, limit int, cutoffISO string, deep bool) ([]issue.IssueSnapshot, string, error) {
+	snaps, err := m.FetchIssues(ctx, projectID, projectKey, limit)
+	newest := ""
+	if len(snaps) > 0 && snaps[0].Item.RemoteUpdatedAt != nil {
+		newest = snaps[0].Item.RemoteUpdatedAt.Format(time.RFC3339)
+	}
+	return snaps, newest, err
+}
 func (m *mockTrackerClient) CreateIssueRemote(ctx context.Context, projectID string, input issue.CreateIssueInput, stateID string) (*issue.WorkItem, error) {
 	return &issue.WorkItem{ID: "iss-remote-1", Key: input.ProjectKey + "-100", Title: input.Title}, nil
 }
@@ -445,5 +453,81 @@ func TestCockpitService_LogTime_Outbox(t *testing.T) {
 	}
 	if !strings.Contains(item.PayloadJSON, "duration_minutes") || !strings.Contains(item.PayloadJSON, "45") {
 		t.Errorf("se esperaban 45 minutos en payload del outbox: %s", item.PayloadJSON)
+	}
+}
+
+func TestTrackerService_SyncUnified_TargetsAndWatermarks(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("error abriendo store: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now()
+	mockClient := &mockTrackerClient{
+		sentComments: make(map[string]string),
+	}
+	svc := app.NewTrackerService(store, mockClient)
+
+	// Encolar un comentario en outbox
+	item := &issue.WorkItem{
+		ID:        "iss-1",
+		Key:       "OMNIFY-10",
+		ProjectID: "proj-1",
+		Title:     "Remote task",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	_ = store.SaveIssue(ctx, item)
+	_ = store.EnqueueOutboxWithMutation(ctx, "c-1", "OMNIFY-10", `{"comment_html":"<p>test</p>"}`, "test-ws", "comment")
+
+	// 1. Target "outbox": solo drena outbox
+	outboxRep, err := svc.SyncUnified(ctx, issue.SyncUnifiedOptions{Target: "outbox"})
+	if err != nil {
+		t.Fatalf("error SyncUnified outbox: %v", err)
+	}
+	if outboxRep.SentComments != 1 || outboxRep.SyncedIssues != 0 {
+		t.Errorf("resultado outbox inesperado: %+v", outboxRep)
+	}
+
+	// 2. Target "catalogs": solo sincroniza catálogos
+	catRep, err := svc.SyncUnified(ctx, issue.SyncUnifiedOptions{Target: "catalogs"})
+	if err != nil {
+		t.Fatalf("error SyncUnified catalogs: %v", err)
+	}
+	if !catRep.SyncedCatalogs || catRep.SyncedProjects != 1 || catRep.SyncedIssues != 0 {
+		t.Errorf("resultado catalogs inesperado: %+v", catRep)
+	}
+
+	// 3. Target "tickets": descarga tareas y guarda marca de agua
+	tickRep, err := svc.SyncUnified(ctx, issue.SyncUnifiedOptions{
+		Target:     "tickets",
+		ProjectKey: "OMNIFY",
+	})
+	if err != nil {
+		t.Fatalf("error SyncUnified tickets: %v", err)
+	}
+	if tickRep.SyncedIssues != 1 {
+		t.Errorf("se esperaba 1 tarea sincronizada, obtenidos: %d", tickRep.SyncedIssues)
+	}
+
+	// Verificar marca de agua en SQLite
+	wm, err := store.GetWatermark(ctx, "issues", "proj-1")
+	if err != nil || wm == nil {
+		t.Fatalf("error recuperando marca de agua tras sync: %v", err)
+	}
+	if wm.ItemsSynced != 1 {
+		t.Errorf("ItemsSynced esperado 1 en marca de agua, obtenido: %d", wm.ItemsSynced)
+	}
+
+	// 4. Target "all": ciclo completo
+	_ = store.EnqueueOutboxWithMutation(ctx, "c-2", "OMNIFY-10", `{"comment_html":"<p>test 2</p>"}`, "test-ws", "comment")
+	allRep, err := svc.SyncUnified(ctx, issue.SyncUnifiedOptions{Target: "all"})
+	if err != nil {
+		t.Fatalf("error SyncUnified all: %v", err)
+	}
+	if allRep.SentComments != 1 || !allRep.SyncedCatalogs || allRep.SyncedIssues != 1 {
+		t.Errorf("resultado all inesperado: %+v", allRep)
 	}
 }

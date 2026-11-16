@@ -107,6 +107,15 @@ func (m *mockAdversarialTrackerClient) FetchIssues(ctx context.Context, projectI
 	return []issue.IssueSnapshot{}, nil
 }
 
+func (m *mockAdversarialTrackerClient) FetchIssuesDelta(ctx context.Context, projectID, projectKey string, limit int, cutoffISO string, deep bool) ([]issue.IssueSnapshot, string, error) {
+	snaps, err := m.FetchIssues(ctx, projectID, projectKey, limit)
+	newest := ""
+	if len(snaps) > 0 && snaps[0].Item.RemoteUpdatedAt != nil {
+		newest = snaps[0].Item.RemoteUpdatedAt.Format(time.RFC3339)
+	}
+	return snaps, newest, err
+}
+
 func (m *mockAdversarialTrackerClient) CreateIssueRemote(ctx context.Context, projectID string, input issue.CreateIssueInput, stateID string) (*issue.WorkItem, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -709,6 +718,15 @@ func (m *mockChaosTrackerClient) FetchIssues(ctx context.Context, projectID, pro
 		return snk, nil
 	}
 	return m.issues[projectID], nil
+}
+
+func (m *mockChaosTrackerClient) FetchIssuesDelta(ctx context.Context, projectID, projectKey string, limit int, cutoffISO string, deep bool) ([]issue.IssueSnapshot, string, error) {
+	snaps, err := m.FetchIssues(ctx, projectID, projectKey, limit)
+	newest := ""
+	if len(snaps) > 0 && snaps[0].Item.RemoteUpdatedAt != nil {
+		newest = snaps[0].Item.RemoteUpdatedAt.Format(time.RFC3339)
+	}
+	return snaps, newest, err
 }
 
 func (m *mockChaosTrackerClient) AddProjectWithData(identifier, name string, issueCount int) {

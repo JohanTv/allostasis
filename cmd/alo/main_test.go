@@ -81,6 +81,7 @@ func TestCLI_LoadJSONContract(t *testing.T) {
 func TestCLI_SyncJSONEnvelope(t *testing.T) {
 	cmd := exec.Command("go", "run", "./cmd/alo", "sync", "--json")
 	cmd.Dir = "../.."
+	cmd.Env = append(os.Environ(), "PLANE_API_KEY=")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("error ejecutando alo sync --json: %v (output: %s)", err, string(out))
@@ -249,7 +250,7 @@ func TestCLI_TicketComment_And_GetFlags(t *testing.T) {
 		cmdArgs := append([]string{"run", "./cmd/alo"}, args...)
 		cmd := exec.Command("go", cmdArgs...)
 		cmd.Dir = "../.."
-		cmd.Env = append(os.Environ(), "PLANE_DB_PATH="+dbPath)
+		cmd.Env = append(os.Environ(), "PLANE_DB_PATH="+dbPath, "PLANE_API_KEY=")
 		return cmd.CombinedOutput()
 	}
 
@@ -348,5 +349,60 @@ func TestCLI_TicketComment_And_GetFlags(t *testing.T) {
 	}
 	if err := json.Unmarshal(out, &outboxEnvelope); err != nil || len(outboxEnvelope.Data) < 2 {
 		t.Fatalf("se esperaban al menos 2 registros en outbox (creación y log), obtenidos: %d (out: %s)", len(outboxEnvelope.Data), string(out))
+	}
+}
+
+func TestCLI_SyncUnified_GrammarAndTargets(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "worklogs.db")
+
+	runAlo := func(args ...string) ([]byte, error) {
+		cmdArgs := append([]string{"run", "./cmd/alo"}, args...)
+		cmd := exec.Command("go", cmdArgs...)
+		cmd.Dir = "../.."
+		cmd.Env = append(os.Environ(), "PLANE_DB_PATH="+dbPath, "PLANE_API_KEY=")
+		return cmd.CombinedOutput()
+	}
+
+	// 1. alo sync (sin target, all)
+	out, err := runAlo("sync", "--json")
+	if err != nil {
+		t.Fatalf("error ejecutando alo sync --json: %v (out: %s)", err, string(out))
+	}
+	var syncRep struct {
+		OK   bool                    `json:"ok"`
+		Data issue.SyncUnifiedReport `json:"data"`
+	}
+	if err := json.Unmarshal(out, &syncRep); err != nil {
+		t.Fatalf("error parseando respuesta de alo sync: %v (out: %s)", err, string(out))
+	}
+	if syncRep.Data.Target != "all" {
+		t.Errorf("target esperado 'all', obtenido: %s", syncRep.Data.Target)
+	}
+
+	// 2. alo sync outbox
+	out, err = runAlo("sync", "outbox", "--json")
+	if err != nil {
+		t.Fatalf("error ejecutando alo sync outbox: %v (out: %s)", err, string(out))
+	}
+	var outboxRep struct {
+		OK   bool                    `json:"ok"`
+		Data issue.SyncUnifiedReport `json:"data"`
+	}
+	if err := json.Unmarshal(out, &outboxRep); err != nil || outboxRep.Data.Target != "outbox" {
+		t.Errorf("resultado outbox inesperado: %+v", outboxRep)
+	}
+
+	// 3. alo sync tickets con --deep
+	out, err = runAlo("sync", "tickets", "--deep", "--json")
+	if err != nil {
+		t.Fatalf("error ejecutando alo sync tickets --deep: %v (out: %s)", err, string(out))
+	}
+	var ticketsRep struct {
+		OK   bool                    `json:"ok"`
+		Data issue.SyncUnifiedReport `json:"data"`
+	}
+	if err := json.Unmarshal(out, &ticketsRep); err != nil || ticketsRep.Data.Target != "tickets" {
+		t.Errorf("resultado tickets inesperado: %+v", ticketsRep)
 	}
 }

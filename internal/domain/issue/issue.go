@@ -273,6 +273,42 @@ type SyncReport struct {
 	Status         string   `json:"status"`
 }
 
+// SyncWatermark registra la marca de agua y telemetría de sincronización incremental por dominio y proyecto (ADR 0028 / RFC 0027).
+type SyncWatermark struct {
+	Domain              string    `json:"domain"`
+	ProjectID           string    `json:"project_id"`
+	LastSyncTimestamp   float64   `json:"last_sync_timestamp"`
+	ServerHighWatermark string    `json:"server_high_watermark,omitempty"`
+	Status              string    `json:"status"`
+	ItemsSynced         int       `json:"items_synced"`
+	PagesFetched        int       `json:"pages_fetched"`
+	DurationMs          int64     `json:"duration_ms"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+// SyncUnifiedOptions encapsula los parámetros de la sincronización soberana y granular.
+type SyncUnifiedOptions struct {
+	Target      string `json:"target"` // all, tickets, catalogs, outbox, hours
+	ProjectKey  string `json:"project_key,omitempty"`
+	AllProjects bool   `json:"all_projects,omitempty"`
+	Deep        bool   `json:"deep,omitempty"`
+	Limit       int    `json:"limit,omitempty"`
+}
+
+// SyncUnifiedReport resume las operaciones ejecutadas en la sincronización unificada.
+type SyncUnifiedReport struct {
+	Status         string            `json:"status"`
+	Target         string            `json:"target"`
+	SentComments   int               `json:"sent_comments"`
+	FailedComments int               `json:"failed_comments"`
+	SyncedIssues   int               `json:"synced_issues"`
+	SyncedProjects int               `json:"synced_projects,omitempty"`
+	SyncedCatalogs bool              `json:"synced_catalogs,omitempty"`
+	Watermarks     map[string]string `json:"watermarks,omitempty"` // project -> server_high_watermark
+	Errors         []string          `json:"errors,omitempty"`
+	DurationMs     int64             `json:"duration_ms"`
+}
+
 // IssueSnapshot contiene la tarea parseada y su payload JSON original sin procesar.
 type IssueSnapshot struct {
 	Item    WorkItem `json:"item"`

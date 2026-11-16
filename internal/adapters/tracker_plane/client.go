@@ -164,7 +164,7 @@ func parseDateStr(v interface{}) string {
 
 // Whoami valida la conectividad y las credenciales con Plane CE retornando datos del usuario actual.
 func (c *Client) Whoami(ctx context.Context) (*UserInfo, error) {
-	if c.cfg.APIKey == "" {
+	if c == nil || c.cfg.APIKey == "" {
 		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
 	}
 	url := fmt.Sprintf("%s/api/v1/users/me/", c.cfg.BaseURL)
@@ -205,7 +205,7 @@ func (c *Client) Whoami(ctx context.Context) (*UserInfo, error) {
 
 // FetchProjects descarga el catálogo de proyectos del workspace desde Plane CE.
 func (c *Client) FetchProjects(ctx context.Context) ([]issue.ProjectRecord, error) {
-	if c.cfg.APIKey == "" {
+	if c == nil || c.cfg.APIKey == "" {
 		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
 	}
 	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/", c.cfg.BaseURL, c.cfg.Workspace)
@@ -265,7 +265,7 @@ func (c *Client) FetchProjects(ctx context.Context) ([]issue.ProjectRecord, erro
 
 // FetchStates descarga los estados de un proyecto específico desde Plane CE.
 func (c *Client) FetchStates(ctx context.Context, projectID string) ([]issue.StateRecord, error) {
-	if c.cfg.APIKey == "" {
+	if c == nil || c.cfg.APIKey == "" {
 		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
 	}
 	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/states/", c.cfg.BaseURL, c.cfg.Workspace, projectID)
@@ -334,7 +334,7 @@ func (c *Client) FetchStates(ctx context.Context, projectID string) ([]issue.Sta
 
 // FetchLabels descarga las etiquetas de un proyecto desde Plane CE.
 func (c *Client) FetchLabels(ctx context.Context, projectID string) ([]issue.Label, error) {
-	if c.cfg.APIKey == "" {
+	if c == nil || c.cfg.APIKey == "" {
 		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
 	}
 
@@ -398,45 +398,18 @@ func (c *Client) FetchLabels(ctx context.Context, projectID string) ([]issue.Lab
 
 // FetchIssues descarga las tareas actualizadas de un proyecto desde Plane CE.
 func (c *Client) FetchIssues(ctx context.Context, projectID, projectKey string, limit int) ([]issue.IssueSnapshot, error) {
-	if c.cfg.APIKey == "" {
-		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
-	}
-	if limit <= 0 {
-		limit = 100
-	}
-	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issues/?order_by=-updated_at&per_page=%d", c.cfg.BaseURL, c.cfg.Workspace, projectID, limit)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("x-api-key", c.cfg.APIKey)
+	snaps, _, err := c.FetchIssuesDelta(ctx, projectID, projectKey, limit, "", false)
+	return snaps, err
+}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("error de red al descargar tareas de Plane: %w", err)
+// FetchIssuesDelta descarga las tareas con soporte de parada temprana por marca de agua (cutoffISO) y paginación continua (--deep).
+func (c *Client) FetchIssuesDelta(ctx context.Context, projectID, projectKey string, limit int, cutoffISO string, deep bool) ([]issue.IssueSnapshot, string, error) {
+	if c == nil || c.cfg.APIKey == "" {
+		return nil, "", fmt.Errorf("PLANE_API_KEY no configurada")
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Plane retornó HTTP %d al listar tareas: %s", resp.StatusCode, string(body))
-	}
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error de lectura en flujo de tareas: %w", err)
-	}
-	var rawIssues []map[string]interface{}
-	var wrapper struct {
-		Results []map[string]interface{} `json:"results"`
-	}
-	if err := json.Unmarshal(bodyBytes, &wrapper); err == nil {
-		rawIssues = wrapper.Results
-	} else if err := json.Unmarshal(bodyBytes, &rawIssues); err != nil {
-		trimmed := bytes.TrimSpace(bodyBytes)
-		if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("{}")) && !bytes.Equal(trimmed, []byte("null")) {
-			return nil, fmt.Errorf("error decodificando tareas de Plane (JSON corrupto): %w", err)
-		}
+	perPage := limit
+	if perPage <= 0 || perPage > 100 {
+		perPage = 100
 	}
 
 	stateMap := make(map[string]issue.StateRecord)
@@ -454,142 +427,220 @@ func (c *Client) FetchIssues(ctx context.Context, projectID, projectKey string, 
 	}
 
 	var snapshots []issue.IssueSnapshot
-	for _, it := range rawIssues {
-		if it == nil {
-			continue
-		}
-		id, _ := it["id"].(string)
-		name, _ := it["name"].(string)
-		seq := parseSequenceID(it["sequence_id"])
-		priority, _ := it["priority"].(string)
-		if priority == "" {
-			priority = "none"
-		}
-
-		ticketKey := fmt.Sprintf("%s-%d", projectKey, seq)
-		if seq == 0 && id != "" {
-			ticketKey = fmt.Sprintf("%s-%s", projectKey, id)
-		}
-		stateName := "Backlog"
-		stateGroup := "backlog"
-
-		if stDetail, ok := it["state_detail"].(map[string]interface{}); ok && stDetail != nil {
-			if sn, ok := stDetail["name"].(string); ok && sn != "" {
-				stateName = sn
-			}
-			if sg, ok := stDetail["group"].(string); ok && sg != "" {
-				stateGroup = sg
-			}
-		} else if sID, ok := it["state"].(string); ok && sID != "" {
-			if st, found := stateMap[sID]; found {
-				stateName = st.Name
-				stateGroup = st.GroupName
-			}
-		} else if stMap, ok := it["state"].(map[string]interface{}); ok && stMap != nil {
-			if sn, ok := stMap["name"].(string); ok && sn != "" {
-				stateName = sn
-			}
-			if sg, ok := stMap["group"].(string); ok && sg != "" {
-				stateGroup = sg
-			}
-		}
-
-		item := issue.WorkItem{
-			ID:         id,
-			Key:        ticketKey,
-			ProjectID:  projectID,
-			ProjectKey: projectKey,
-			SequenceID: seq,
-			Title:      name,
-			StateName:  stateName,
-			StateGroup: stateGroup,
-			State:      issue.State(stateGroup),
-			Priority:   priority,
-		}
-
-		var assigneeIDs []string
-		if assigneesArr, ok := it["assignees"].([]interface{}); ok && assigneesArr != nil {
-			for _, a := range assigneesArr {
-				if a == nil {
-					continue
-				}
-				if aStr, ok := a.(string); ok && aStr != "" {
-					assigneeIDs = append(assigneeIDs, aStr)
-				} else if aMap, ok := a.(map[string]interface{}); ok && aMap != nil {
-					if aID, ok := aMap["id"].(string); ok && aID != "" {
-						assigneeIDs = append(assigneeIDs, aID)
-					}
-				}
-			}
-		}
-		item.Assignees = assigneeIDs
-		if len(assigneeIDs) > 0 {
-			item.Assignee = assigneeIDs[0]
-		}
-
-		// Extraer creador tolerando string UUID o map {id:...}
-		createdBy := parseUserID(it["created_by"])
-		if createdBy == "" {
-			createdBy = parseUserID(it["created_by_detail"])
-		}
-		item.CreatedBy = createdBy
-
-		// Extraer ciclo de vida y fechas temporales
-		item.CompletedAt = parseISOTime(it["completed_at"])
-		item.ArchivedAt = parseISOTime(it["archived_at"])
-		item.StartDate = parseDateStr(it["start_date"])
-		item.TargetDate = parseDateStr(it["target_date"])
-
-		// Extraer fechas upstream agnósticas
-		if upStr, ok := it["updated_at"].(string); ok && upStr != "" {
-			if t, err := time.Parse(time.RFC3339, upStr); err == nil {
-				item.RemoteUpdatedAt = &t
-			}
-		}
-		if crStr, ok := it["created_at"].(string); ok && crStr != "" {
-			if t, err := time.Parse(time.RFC3339, crStr); err == nil {
-				item.CreatedAt = t
-			}
-		}
-
-		if labelsArr, ok := it["labels"].([]interface{}); ok && labelsArr != nil {
-			var labelNames []string
-			for _, l := range labelsArr {
-				if l == nil {
-					continue
-				}
-				if lStr, ok := l.(string); ok && lStr != "" {
-					if lName, found := labelMap[lStr]; found {
-						labelNames = append(labelNames, lName)
-					} else {
-						labelNames = append(labelNames, lStr)
-					}
-				} else if lMap, ok := l.(map[string]interface{}); ok && lMap != nil {
-					if ln, ok := lMap["name"].(string); ok && ln != "" {
-						labelNames = append(labelNames, ln)
-					}
-				}
-			}
-			item.Labels = labelNames
-			item.LabelsCSV = strings.Join(labelNames, ",")
-		}
-
-		rawJSONBytes, _ := json.Marshal(it)
-		snapshots = append(snapshots, issue.IssueSnapshot{
-			Item:    item,
-			RawJSON: string(rawJSONBytes),
-		})
+	var newestUpdatedAt string
+	cursor := ""
+	page := 0
+	maxPages := 50
+	if !deep && cutoffISO == "" && limit <= 100 {
+		maxPages = 1
 	}
+
+	for page < maxPages {
+		page++
+		pageURL := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issues/?order_by=-updated_at&per_page=%d", c.cfg.BaseURL, c.cfg.Workspace, projectID, perPage)
+		if cursor != "" {
+			pageURL += "&cursor=" + url.QueryEscape(cursor)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
+		if err != nil {
+			return nil, newestUpdatedAt, err
+		}
+		req.Header.Set("x-api-key", c.cfg.APIKey)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, newestUpdatedAt, fmt.Errorf("error de red al descargar tareas de Plane: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, newestUpdatedAt, fmt.Errorf("Plane retornó HTTP %d al listar tareas: %s", resp.StatusCode, string(body))
+		}
+
+		bodyBytes, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, newestUpdatedAt, fmt.Errorf("error de lectura en flujo de tareas: %w", err)
+		}
+
+		var rawIssues []map[string]interface{}
+		nextCursor := ""
+		hasNextPage := false
+
+		var wrapper struct {
+			NextCursor string                   `json:"next_cursor"`
+			NextPage   bool                     `json:"next_page_results"`
+			Results    []map[string]interface{} `json:"results"`
+		}
+		if err := json.Unmarshal(bodyBytes, &wrapper); err == nil {
+			rawIssues = wrapper.Results
+			nextCursor = wrapper.NextCursor
+			hasNextPage = wrapper.NextPage
+		} else if err := json.Unmarshal(bodyBytes, &rawIssues); err != nil {
+			trimmed := bytes.TrimSpace(bodyBytes)
+			if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("{}")) && !bytes.Equal(trimmed, []byte("null")) {
+				return nil, newestUpdatedAt, fmt.Errorf("error decodificando tareas de Plane (JSON corrupto): %w", err)
+			}
+		}
+
+		earlyStop := false
+		for _, it := range rawIssues {
+			if it == nil {
+				continue
+			}
+			id, _ := it["id"].(string)
+			name, _ := it["name"].(string)
+			seq := parseSequenceID(it["sequence_id"])
+			priority, _ := it["priority"].(string)
+			if priority == "" {
+				priority = "none"
+			}
+
+			ticketKey := fmt.Sprintf("%s-%d", projectKey, seq)
+			if seq == 0 && id != "" {
+				ticketKey = fmt.Sprintf("%s-%s", projectKey, id)
+			}
+			stateName := "Backlog"
+			stateGroup := "backlog"
+
+			if stDetail, ok := it["state_detail"].(map[string]interface{}); ok && stDetail != nil {
+				if sn, ok := stDetail["name"].(string); ok && sn != "" {
+					stateName = sn
+				}
+				if sg, ok := stDetail["group"].(string); ok && sg != "" {
+					stateGroup = sg
+				}
+			} else if sID, ok := it["state"].(string); ok && sID != "" {
+				if st, found := stateMap[sID]; found {
+					stateName = st.Name
+					stateGroup = st.GroupName
+				}
+			} else if stMap, ok := it["state"].(map[string]interface{}); ok && stMap != nil {
+				if sn, ok := stMap["name"].(string); ok && sn != "" {
+					stateName = sn
+				}
+				if sg, ok := stMap["group"].(string); ok && sg != "" {
+					stateGroup = sg
+				}
+			}
+
+			item := issue.WorkItem{
+				ID:         id,
+				Key:        ticketKey,
+				ProjectID:  projectID,
+				ProjectKey: projectKey,
+				SequenceID: seq,
+				Title:      name,
+				StateName:  stateName,
+				StateGroup: stateGroup,
+				State:      issue.State(stateGroup),
+				Priority:   priority,
+			}
+
+			var assigneeIDs []string
+			if assigneesArr, ok := it["assignees"].([]interface{}); ok && assigneesArr != nil {
+				for _, a := range assigneesArr {
+					if a == nil {
+						continue
+					}
+					if aStr, ok := a.(string); ok && aStr != "" {
+						assigneeIDs = append(assigneeIDs, aStr)
+					} else if aMap, ok := a.(map[string]interface{}); ok && aMap != nil {
+						if aID, ok := aMap["id"].(string); ok && aID != "" {
+							assigneeIDs = append(assigneeIDs, aID)
+						}
+					}
+				}
+			}
+			item.Assignees = assigneeIDs
+			if len(assigneeIDs) > 0 {
+				item.Assignee = assigneeIDs[0]
+			}
+
+			createdBy := parseUserID(it["created_by"])
+			if createdBy == "" {
+				createdBy = parseUserID(it["created_by_detail"])
+			}
+			item.CreatedBy = createdBy
+
+			item.CompletedAt = parseISOTime(it["completed_at"])
+			item.ArchivedAt = parseISOTime(it["archived_at"])
+			item.StartDate = parseDateStr(it["start_date"])
+			item.TargetDate = parseDateStr(it["target_date"])
+
+			upStr, _ := it["updated_at"].(string)
+			if upStr != "" {
+				if t, err := time.Parse(time.RFC3339, upStr); err == nil {
+					item.RemoteUpdatedAt = &t
+				}
+				if newestUpdatedAt == "" {
+					newestUpdatedAt = upStr
+				}
+			}
+			if crStr, ok := it["created_at"].(string); ok && crStr != "" {
+				if t, err := time.Parse(time.RFC3339, crStr); err == nil {
+					item.CreatedAt = t
+				}
+			}
+
+			// Parada temprana (Early Termination): si no es sincronización profunda (--deep)
+			// y encontramos un ticket con updated_at <= cutoffISO, hemos alcanzado la marca de agua.
+			if !deep && cutoffISO != "" && upStr != "" && upStr <= cutoffISO {
+				earlyStop = true
+				break
+			}
+
+			if labelsArr, ok := it["labels"].([]interface{}); ok && labelsArr != nil {
+				var labelNames []string
+				for _, l := range labelsArr {
+					if l == nil {
+						continue
+					}
+					if lStr, ok := l.(string); ok && lStr != "" {
+						if lName, found := labelMap[lStr]; found {
+							labelNames = append(labelNames, lName)
+						} else {
+							labelNames = append(labelNames, lStr)
+						}
+					} else if lMap, ok := l.(map[string]interface{}); ok && lMap != nil {
+						if ln, ok := lMap["name"].(string); ok && ln != "" {
+							labelNames = append(labelNames, ln)
+						}
+					}
+				}
+				item.Labels = labelNames
+				item.LabelsCSV = strings.Join(labelNames, ",")
+			}
+
+			rawJSONBytes, _ := json.Marshal(it)
+			snapshots = append(snapshots, issue.IssueSnapshot{
+				Item:    item,
+				RawJSON: string(rawJSONBytes),
+			})
+		}
+
+		if earlyStop {
+			break
+		}
+
+		if nextCursor == "" || (!hasNextPage && len(rawIssues) < perPage) {
+			break
+		}
+		cursor = nextCursor
+	}
+
 	if snapshots == nil {
 		snapshots = make([]issue.IssueSnapshot, 0)
 	}
 
-	return snapshots, nil
+	return snapshots, newestUpdatedAt, nil
 }
 
 // SendCommentRaw envía un payload JSON de comentario hacia Plane CE sin intermediación de base de datos.
 func (c *Client) SendCommentRaw(ctx context.Context, targetWS, projectID, issueID, payloadJSON string) (string, error) {
-	if c.cfg.APIKey == "" {
+	if c == nil || c.cfg.APIKey == "" {
 		return "", fmt.Errorf("PLANE_API_KEY no configurada")
 	}
 	if targetWS == "" {
@@ -634,7 +685,7 @@ func (c *Client) SendCommentRaw(ctx context.Context, targetWS, projectID, issueI
 
 // CreateIssueRemote crea una tarea en Plane CE y retorna el modelo creado.
 func (c *Client) CreateIssueRemote(ctx context.Context, projectID string, input issue.CreateIssueInput, stateID string) (*issue.WorkItem, error) {
-	if c.cfg.APIKey == "" {
+	if c == nil || c.cfg.APIKey == "" {
 		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
 	}
 
@@ -725,7 +776,7 @@ func (c *Client) CreateIssueRemote(ctx context.Context, projectID string, input 
 
 // UpdateIssueRemote actualiza los campos de una tarea en Plane CE.
 func (c *Client) UpdateIssueRemote(ctx context.Context, projectID, issueID string, input issue.UpdateIssueInput, stateID string) error {
-	if c.cfg.APIKey == "" {
+	if c == nil || c.cfg.APIKey == "" {
 		return fmt.Errorf("PLANE_API_KEY no configurada")
 	}
 
@@ -785,7 +836,7 @@ func (c *Client) UpdateIssueRemote(ctx context.Context, projectID, issueID strin
 
 // DeleteIssueRemote elimina un work item en Plane CE.
 func (c *Client) DeleteIssueRemote(ctx context.Context, projectID, issueID string) error {
-	if c.cfg.APIKey == "" {
+	if c == nil || c.cfg.APIKey == "" {
 		return fmt.Errorf("PLANE_API_KEY no configurada")
 	}
 
@@ -812,7 +863,7 @@ func (c *Client) DeleteIssueRemote(ctx context.Context, projectID, issueID strin
 
 // FetchComments recupera todos los comentarios de una tarea en Plane CE usando paginación por cursor.
 func (c *Client) FetchComments(ctx context.Context, projectID, issueID string) ([]issue.CommentRecord, error) {
-	if c.cfg.APIKey == "" {
+	if c == nil || c.cfg.APIKey == "" {
 		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
 	}
 	if c.cfg.Workspace == "" {
@@ -883,7 +934,7 @@ func (c *Client) FetchComments(ctx context.Context, projectID, issueID string) (
 
 // AddLinkRemote asocia un enlace a una tarea en Plane CE.
 func (c *Client) AddLinkRemote(ctx context.Context, projectID, issueID, title, linkURL string) (*issue.Link, error) {
-	if c.cfg.APIKey == "" {
+	if c == nil || c.cfg.APIKey == "" {
 		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
 	}
 
@@ -927,7 +978,7 @@ func (c *Client) AddLinkRemote(ctx context.Context, projectID, issueID, title, l
 
 // ListLinksRemote consulta los enlaces de una tarea en Plane CE.
 func (c *Client) ListLinksRemote(ctx context.Context, projectID, issueID string) ([]issue.Link, error) {
-	if c.cfg.APIKey == "" {
+	if c == nil || c.cfg.APIKey == "" {
 		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
 	}
 
@@ -973,7 +1024,7 @@ func (c *Client) ListLinksRemote(ctx context.Context, projectID, issueID string)
 
 // DeleteLinkRemote remueve un enlace de una tarea en Plane CE.
 func (c *Client) DeleteLinkRemote(ctx context.Context, projectID, issueID, linkID string) error {
-	if c.cfg.APIKey == "" {
+	if c == nil || c.cfg.APIKey == "" {
 		return fmt.Errorf("PLANE_API_KEY no configurada")
 	}
 
@@ -998,7 +1049,7 @@ func (c *Client) DeleteLinkRemote(ctx context.Context, projectID, issueID, linkI
 
 // EditCommentRemote actualiza el contenido de un comentario en Plane CE.
 func (c *Client) EditCommentRemote(ctx context.Context, projectID, issueID, commentID, newBody string) error {
-	if c.cfg.APIKey == "" {
+	if c == nil || c.cfg.APIKey == "" {
 		return fmt.Errorf("PLANE_API_KEY no configurada")
 	}
 
@@ -1029,7 +1080,7 @@ func (c *Client) EditCommentRemote(ctx context.Context, projectID, issueID, comm
 
 // DeleteCommentRemote elimina un comentario en Plane CE.
 func (c *Client) DeleteCommentRemote(ctx context.Context, projectID, issueID, commentID string) error {
-	if c.cfg.APIKey == "" {
+	if c == nil || c.cfg.APIKey == "" {
 		return fmt.Errorf("PLANE_API_KEY no configurada")
 	}
 

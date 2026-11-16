@@ -516,12 +516,13 @@ func newTicketCmd() *cobra.Command {
 	ticketUpdateCmd.Flags().StringVar(&updateTargetDateFlag, "due-date", "", "Fecha límite / de entrega (YYYY-MM-DD)")
 	ticketUpdateCmd.Flags().StringVar(&updateTargetDateFlag, "target-date", "", "Alias de --due-date (YYYY-MM-DD)")
 
-	// 6. ticket sync
+	// 6. ticket sync (delegado a SyncUnified)
 	var syncAllProjectsFlag bool
 	var syncCatalogsFlag bool
+	var syncDeepFlag bool
 	ticketSyncCmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Descarga y actualiza proyectos, estados y tareas desde Plane CE",
+		Short: "Descarga y actualiza proyectos, estados y tareas desde Plane CE (delegado a 'alo sync')",
 		Run: func(cmd *cobra.Command, args []string) {
 			svc, store, err := initTrackerService()
 			if err != nil {
@@ -537,24 +538,19 @@ func newTicketCmd() *cobra.Command {
 				ctx = context.Background()
 			}
 
+			target := "tickets"
 			if syncCatalogsFlag {
-				err := svc.SyncCatalogs(ctx, ticketProjectFlag)
-				if err != nil {
-					errors.EmitErrorWithDetail(err, errors.ErrorDetail{
-						Code:     "SYNC_CATALOGS_FAILED",
-						Category: errors.CategoryUpstreamService,
-						Hint:     "Verifica la conectividad con Plane CE",
-					}, errors.ExitGeneralError, jsonFlag)
-				}
-				if jsonFlag {
-					errors.EmitSuccess(map[string]interface{}{"status": "catalogs_synced"}, true)
-					return
-				}
-				fmt.Println("🔄 Catálogos sincronizados: proyectos, estados y etiquetas actualizados en SQLite.")
-				return
+				target = "catalogs"
 			}
 
-			count, err := svc.Sync(ctx, ticketProjectFlag, syncAllProjectsFlag)
+			opts := issue.SyncUnifiedOptions{
+				Target:      target,
+				ProjectKey:  ticketProjectFlag,
+				AllProjects: syncAllProjectsFlag,
+				Deep:        syncDeepFlag,
+			}
+
+			report, err := svc.SyncUnified(ctx, opts)
 			if err != nil {
 				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
 					Code:     "SYNC_FAILED",
@@ -564,16 +560,27 @@ func newTicketCmd() *cobra.Command {
 			}
 
 			if jsonFlag {
-				errors.EmitSuccess(map[string]interface{}{"synced_issues": count}, true)
+				errors.EmitSuccess(report, true)
 				return
 			}
 
-			fmt.Printf("🔄 Sincronización completada: %d tareas actualizadas en SQLite.\n", count)
+			if syncCatalogsFlag {
+				fmt.Printf("🔄 Catálogos sincronizados: %d proyectos, estados y etiquetas actualizados en SQLite.\n", report.SyncedProjects)
+				return
+			}
+
+			fmt.Printf("🔄 Sincronización completada: %d tareas actualizadas en SQLite.\n", report.SyncedIssues)
+			for proj, wm := range report.Watermarks {
+				if wm != "" {
+					fmt.Printf("   • %s watermark: %s\n", proj, wm)
+				}
+			}
 		},
 	}
 	ticketSyncCmd.Flags().StringVarP(&ticketProjectFlag, "project", "p", "", "Proyecto específico a sincronizar")
 	ticketSyncCmd.Flags().BoolVar(&syncAllProjectsFlag, "all-projects", false, "Sincronizar todos los proyectos")
 	ticketSyncCmd.Flags().BoolVarP(&syncCatalogsFlag, "catalogs", "c", false, "Sincronizar únicamente catálogos (proyectos, estados, etiquetas)")
+	ticketSyncCmd.Flags().BoolVar(&syncDeepFlag, "deep", false, "Sincronización profunda: ignora marcas de agua y reindexa todo")
 
 	// 7. ticket whoami
 	ticketWhoamiCmd := &cobra.Command{

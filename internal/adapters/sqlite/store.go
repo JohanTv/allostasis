@@ -271,6 +271,19 @@ func (s *Store) migrateBaseline() error {
 		asset_url TEXT NOT NULL,
 		created_at TEXT NOT NULL
 	);
+
+	CREATE TABLE IF NOT EXISTS sync_watermarks (
+		domain TEXT NOT NULL,
+		project_id TEXT NOT NULL,
+		last_sync_timestamp REAL NOT NULL,
+		server_high_watermark TEXT,
+		status TEXT NOT NULL DEFAULT 'synced',
+		items_synced INTEGER NOT NULL DEFAULT 0,
+		pages_fetched INTEGER NOT NULL DEFAULT 0,
+		duration_ms INTEGER NOT NULL DEFAULT 0,
+		updated_at REAL NOT NULL,
+		PRIMARY KEY (domain, project_id)
+	);
 	`
 	if _, err := s.db.Exec(schema); err != nil {
 		return err
@@ -303,6 +316,7 @@ func (s *Store) migrateBaseline() error {
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_outbox_state ON outbox(state, id)`)
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_issues_proj ON issues_cache(project_id, state_group)`)
 	_, _ = s.db.Exec(`CREATE TABLE IF NOT EXISTS user_profile (id TEXT PRIMARY KEY, username TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '', display_name TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL DEFAULT 0)`)
+	_, _ = s.db.Exec(`CREATE TABLE IF NOT EXISTS sync_watermarks (domain TEXT NOT NULL, project_id TEXT NOT NULL, last_sync_timestamp REAL NOT NULL, server_high_watermark TEXT, status TEXT NOT NULL DEFAULT 'synced', items_synced INTEGER NOT NULL DEFAULT 0, pages_fetched INTEGER NOT NULL DEFAULT 0, duration_ms INTEGER NOT NULL DEFAULT 0, updated_at REAL NOT NULL, PRIMARY KEY (domain, project_id))`)
 	return nil
 }
 
@@ -1618,4 +1632,41 @@ func (s *Store) GetAssignmentEvents(ctx context.Context, ticketID string) ([]iss
 		events = []issue.AssignmentEvent{}
 	}
 	return events, rows.Err()
+}
+
+// GetWatermark consulta la marca de agua de sincronización delta para un dominio y proyecto.
+func (s *Store) GetWatermark(ctx context.Context, domain, projectID string) (*issue.SyncWatermark, error) {
+	query := `SELECT domain, project_id, last_sync_timestamp, COALESCE(server_high_watermark, ''), status, items_synced, pages_fetched, duration_ms, updated_at
+	          FROM sync_watermarks WHERE domain = ? AND project_id = ?`
+	var wm issue.SyncWatermark
+	var upUnix float64
+	err := s.reader.QueryRowContext(ctx, query, domain, projectID).Scan(
+		&wm.Domain, &wm.ProjectID, &wm.LastSyncTimestamp, &wm.ServerHighWatermark,
+		&wm.Status, &wm.ItemsSynced, &wm.PagesFetched, &wm.DurationMs, &upUnix,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	wm.UpdatedAt = time.Unix(int64(upUnix), 0)
+	return &wm, nil
+}
+
+// SetWatermark guarda o actualiza la marca de agua de sincronización delta.
+func (s *Store) SetWatermark(ctx context.Context, wm issue.SyncWatermark) error {
+	nowUnix := float64(time.Now().Unix())
+	query := `INSERT INTO sync_watermarks(domain, project_id, last_sync_timestamp, server_high_watermark, status, items_synced, pages_fetched, duration_ms, updated_at)
+	          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+	          ON CONFLICT(domain, project_id) DO UPDATE SET
+	            last_sync_timestamp = excluded.last_sync_timestamp,
+	            server_high_watermark = excluded.server_high_watermark,
+	            status = excluded.status,
+	            items_synced = excluded.items_synced,
+	            pages_fetched = excluded.pages_fetched,
+	            duration_ms = excluded.duration_ms,
+	            updated_at = excluded.updated_at`
+	_, err := s.db.ExecContext(ctx, query, wm.Domain, wm.ProjectID, wm.LastSyncTimestamp, wm.ServerHighWatermark, wm.Status, wm.ItemsSynced, wm.PagesFetched, wm.DurationMs, nowUnix)
+	return err
 }
