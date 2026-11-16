@@ -3,12 +3,33 @@ package main
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/allostasis/alo/internal/domain/issue"
 	"github.com/allostasis/alo/internal/presentation/errors"
 	"github.com/spf13/cobra"
 )
+
+var (
+	htmlWorklogMetaRegex = regexp.MustCompile(`<!--\s*PLANE_WORKLOG_METADATA[\s\S]*?-->`)
+	htmlTagRegex         = regexp.MustCompile(`<[^>]*>`)
+)
+
+func stripHTMLTags(s string) string {
+	s = htmlWorklogMetaRegex.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "<br>", "\n")
+	s = strings.ReplaceAll(s, "<br/>", "\n")
+	s = strings.ReplaceAll(s, "<br />", "\n")
+	s = strings.ReplaceAll(s, "</p>", "\n")
+	s = htmlTagRegex.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "&nbsp;", " ")
+	s = strings.ReplaceAll(s, "&amp;", "&")
+	s = strings.ReplaceAll(s, "&lt;", "<")
+	s = strings.ReplaceAll(s, "&gt;", ">")
+	s = strings.ReplaceAll(s, "&quot;", "\"")
+	return strings.TrimSpace(s)
+}
 
 func newTicketCmd() *cobra.Command {
 	ticketCmd := &cobra.Command{
@@ -217,6 +238,9 @@ func newTicketCmd() *cobra.Command {
 	ticketSearchCmd.Flags().IntVarP(&ticketLimitFlag, "limit", "l", 20, "Límite de resultados")
 
 	// 3. ticket get
+	var getLastFlag int
+	var getHistoryFlag bool
+	var getOfflineFlag bool
 	ticketGetCmd := &cobra.Command{
 		Use:   "get <TICKET-ID>",
 		Short: "Obtiene el detalle completo de una tarea",
@@ -245,7 +269,33 @@ func newTicketCmd() *cobra.Command {
 				}, errors.ExitNotFound, jsonFlag)
 			}
 
+			var comments []issue.CommentRecord
+			if getLastFlag > 0 {
+				comments, _ = svc.GetComments(ctx, item.Key, getLastFlag, getOfflineFlag)
+			}
+
+			var hist *issue.TicketHistory
+			if getHistoryFlag {
+				hist, _ = svc.GetHistory(ctx, item.Key)
+			}
+
 			if jsonFlag {
+				if getLastFlag > 0 || getHistoryFlag {
+					resp := map[string]interface{}{
+						"item": item,
+					}
+					if getLastFlag > 0 {
+						if comments == nil {
+							comments = []issue.CommentRecord{}
+						}
+						resp["comments"] = comments
+					}
+					if getHistoryFlag {
+						resp["history"] = hist
+					}
+					errors.EmitSuccess(resp, true)
+					return
+				}
 				errors.EmitSuccess(item, true)
 				return
 			}
@@ -286,8 +336,48 @@ func newTicketCmd() *cobra.Command {
 			if item.Description != "" {
 				fmt.Printf("\n📄 Descripción:\n   %s\n", strings.ReplaceAll(item.Description, "\n", "\n   "))
 			}
+
+			if len(comments) > 0 {
+				fmt.Printf("\n💬 Comentarios Recientes (%d):\n", len(comments))
+				for _, c := range comments {
+					author := c.CreatedBy
+					if author == "" {
+						author = c.Actor
+					}
+					if author == "" {
+						author = "usuario"
+					}
+					cleanText := stripHTMLTags(c.CommentHTML)
+					fmt.Printf("   • [%s]: %s\n", author, cleanText)
+				}
+			}
+
+			if hist != nil {
+				if len(hist.Assignments) > 0 {
+					fmt.Printf("\n📋 Historial de Asignaciones:\n")
+					for _, a := range hist.Assignments {
+						user := a.UserName
+						if user == "" {
+							user = a.UserID
+						}
+						fmt.Printf("   • [%s] %s: %s\n", a.AtUTC, a.Kind, user)
+					}
+				}
+				if len(hist.Worklogs) > 0 {
+					fmt.Printf("\n⏱️  Sesiones de Esfuerzo (Worklogs):\n")
+					totalMins := 0
+					for _, w := range hist.Worklogs {
+						fmt.Printf("   • %d min (%s)\n", w.DurationMinutes, w.AuthorID)
+						totalMins += w.DurationMinutes
+					}
+					fmt.Printf("   Total: %.1f hrs (%d min)\n", float64(totalMins)/60.0, totalMins)
+				}
+			}
 		},
 	}
+	ticketGetCmd.Flags().IntVar(&getLastFlag, "last", 0, "Mostrar los últimos N comentarios")
+	ticketGetCmd.Flags().BoolVar(&getHistoryFlag, "history", false, "Mostrar historial de asignaciones y sesiones de esfuerzo")
+	ticketGetCmd.Flags().BoolVar(&getOfflineFlag, "offline", false, "Consultar únicamente desde la caché local sin llamadas a la red")
 
 	// 4. ticket create
 	var createProjectFlag, createPriorityFlag, createStateFlag, createDescFlag string
@@ -346,9 +436,10 @@ func newTicketCmd() *cobra.Command {
 	// 5. ticket update
 	var updateStateFlag, updatePriorityFlag, updateTitleFlag string
 	var updateStartDateFlag, updateTargetDateFlag string
+	var updateDescFlag, updateAssignFlag, updateLabelsFlag string
 	ticketUpdateCmd := &cobra.Command{
 		Use:   "update <TICKET-ID>",
-		Short: "Actualiza el estado, prioridad o título de una tarea",
+		Short: "Actualiza el estado, prioridad, título, asignado o descripción de una tarea",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			svc, store, err := initTrackerService()
@@ -374,6 +465,23 @@ func newTicketCmd() *cobra.Command {
 			}
 			if updateTitleFlag != "" {
 				input.Title = &updateTitleFlag
+			}
+			if updateDescFlag != "" {
+				input.Description = &updateDescFlag
+			}
+			if updateAssignFlag != "" {
+				input.Assignee = &updateAssignFlag
+			}
+			if updateLabelsFlag != "" {
+				rawLabels := strings.Split(updateLabelsFlag, ",")
+				var cleaned []string
+				for _, l := range rawLabels {
+					trimmed := strings.TrimSpace(l)
+					if trimmed != "" {
+						cleaned = append(cleaned, trimmed)
+					}
+				}
+				input.Labels = &cleaned
 			}
 			if updateStartDateFlag != "" {
 				input.StartDate = &updateStartDateFlag
@@ -401,6 +509,9 @@ func newTicketCmd() *cobra.Command {
 	ticketUpdateCmd.Flags().StringVar(&updateStateFlag, "state", "", "Nuevo estado")
 	ticketUpdateCmd.Flags().StringVar(&updatePriorityFlag, "priority", "", "Nueva prioridad")
 	ticketUpdateCmd.Flags().StringVar(&updateTitleFlag, "title", "", "Nuevo título")
+	ticketUpdateCmd.Flags().StringVar(&updateDescFlag, "desc", "", "Nueva descripción")
+	ticketUpdateCmd.Flags().StringVar(&updateAssignFlag, "assign", "", "Reasignar a usuario (UUID o identificador)")
+	ticketUpdateCmd.Flags().StringVar(&updateLabelsFlag, "labels", "", "Etiquetas separadas por coma")
 	ticketUpdateCmd.Flags().StringVar(&updateStartDateFlag, "start-date", "", "Fecha de inicio planificada (YYYY-MM-DD)")
 	ticketUpdateCmd.Flags().StringVar(&updateTargetDateFlag, "due-date", "", "Fecha límite / de entrega (YYYY-MM-DD)")
 	ticketUpdateCmd.Flags().StringVar(&updateTargetDateFlag, "target-date", "", "Alias de --due-date (YYYY-MM-DD)")
@@ -962,7 +1073,305 @@ func newTicketCmd() *cobra.Command {
 	ticketStatesCmd.Flags().StringVarP(&ticketStatesProjectFlag, "project", "p", "", "Filtrar por proyecto (ej. OMNIFY, OPS)")
 	ticketStatesCmd.Flags().BoolVar(&ticketStatesRefreshFlag, "refresh", false, "Refrescar estados desde Plane CE")
 
-	ticketCmd.AddCommand(ticketListCmd, ticketSearchCmd, ticketGetCmd, ticketCreateCmd, ticketUpdateCmd, ticketSyncCmd, ticketWhoamiCmd, ticketLabelsCmd, ticketDeleteCmd, ticketLinkCmd, ticketFocusCmd, ticketProjectsCmd, ticketStatesCmd)
+	// 14. ticket comment
+	ticketCommentCmd := &cobra.Command{
+		Use:     "comment",
+		Aliases: []string{"cmt", "comments"},
+		Short:   "Gestión de comentarios y bitácoras de trabajo sobre una tarea",
+	}
+
+	var commentHoursFlag float64
+	var commentStartTimeFlag string
+	var commentTrackFlag string
+	commentAddCmd := &cobra.Command{
+		Use:   "add <TICKET-ID> <MENSAJE>",
+		Short: "Añade un comentario o bitácora de tiempo a una tarea",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+
+			rec, err := svc.AddComment(ctx, args[0], args[1], commentHoursFlag, commentStartTimeFlag, commentTrackFlag)
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "COMMENT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(rec, true)
+				return
+			}
+
+			if commentHoursFlag > 0 {
+				fmt.Printf("✓ Bitácora registrada en %s (%.1f hrs): %s\n", args[0], commentHoursFlag, args[1])
+			} else {
+				fmt.Printf("✓ Comentario añadido a %s: %s\n", args[0], args[1])
+			}
+		},
+	}
+	commentAddCmd.Flags().Float64Var(&commentHoursFlag, "hours", 0, "Horas invertidas a registrar como bitácora")
+	commentAddCmd.Flags().StringVar(&commentStartTimeFlag, "start-time", "", "Hora de inicio en formato HH:MM")
+	commentAddCmd.Flags().StringVar(&commentTrackFlag, "track", "main", "Track de ejecución (main, etc.)")
+
+	commentEditCmd := &cobra.Command{
+		Use:   "edit <TICKET-ID> <COMMENT-ID> <NUEVO-MENSAJE>",
+		Short: "Edita el contenido de un comentario en Plane CE",
+		Args:  cobra.ExactArgs(3),
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+
+			if err := svc.EditComment(ctx, args[0], args[1], args[2]); err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "EDIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(map[string]interface{}{"status": "updated", "comment_id": args[1]}, true)
+				return
+			}
+
+			fmt.Printf("✓ Comentario %s actualizado en %s\n", args[1], args[0])
+		},
+	}
+
+	var commentDeleteYesFlag bool
+	commentDeleteCmd := &cobra.Command{
+		Use:   "delete <TICKET-ID> <COMMENT-ID>",
+		Short: "Elimina un comentario en Plane CE",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			if !commentDeleteYesFlag {
+				errors.EmitErrorWithDetail(fmt.Errorf("se requiere confirmación con --yes para eliminar el comentario"), errors.ErrorDetail{
+					Code:             "CONFIRMATION_REQUIRED",
+					Category:         errors.CategoryUserInput,
+					SuggestedCommand: fmt.Sprintf("alo ticket comment delete %s %s --yes", args[0], args[1]),
+				}, errors.ExitUsageError, jsonFlag)
+			}
+
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+
+			if err := svc.DeleteComment(ctx, args[0], args[1]); err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "DELETE_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(map[string]interface{}{"status": "deleted", "comment_id": args[1]}, true)
+				return
+			}
+
+			fmt.Printf("✓ Comentario %s eliminado de %s\n", args[1], args[0])
+		},
+	}
+	commentDeleteCmd.Flags().BoolVarP(&commentDeleteYesFlag, "yes", "y", false, "Confirmar eliminación definitiva del comentario")
+
+	var commentListLastFlag int
+	var commentListOfflineFlag bool
+	commentListCmd := &cobra.Command{
+		Use:     "list <TICKET-ID>",
+		Aliases: []string{"ls"},
+		Short:   "Lista los comentarios y bitácoras asociadas a una tarea",
+		Args:    cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+
+			comments, err := svc.GetComments(ctx, args[0], commentListLastFlag, commentListOfflineFlag)
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "LIST_COMMENTS_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if comments == nil {
+				comments = []issue.CommentRecord{}
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(comments, true)
+				return
+			}
+
+			if len(comments) == 0 {
+				fmt.Printf("No hay comentarios registrados para %s.\n", args[0])
+				return
+			}
+
+			fmt.Printf("💬 Comentarios en %s (%d):\n", args[0], len(comments))
+			for _, c := range comments {
+				author := c.CreatedBy
+				if author == "" {
+					author = c.Actor
+				}
+				if author == "" {
+					author = "usuario"
+				}
+				cleanText := stripHTMLTags(c.CommentHTML)
+				fmt.Printf("   • [%s] %s: %s\n", c.ID, author, cleanText)
+			}
+		},
+	}
+	commentListCmd.Flags().IntVar(&commentListLastFlag, "last", 10, "Número de comentarios recientes a mostrar")
+	commentListCmd.Flags().BoolVar(&commentListOfflineFlag, "offline", false, "Leer exclusivamente de la caché local")
+
+	ticketCommentCmd.AddCommand(commentAddCmd, commentEditCmd, commentDeleteCmd, commentListCmd)
+
+	// 15. ticket outbox
+	ticketOutboxCmd := &cobra.Command{
+		Use:   "outbox",
+		Short: "Inspección y gestión de la cola outbox de mutaciones pendientes",
+	}
+
+	var outboxListAllFlag bool
+	outboxListCmd := &cobra.Command{
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "Lista las mutaciones encoladas en outbox",
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+
+			items, err := svc.ListOutbox(ctx, outboxListAllFlag)
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "OUTBOX_LIST_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if items == nil {
+				items = []issue.OutboxRecord{}
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(items, true)
+				return
+			}
+
+			if len(items) == 0 {
+				fmt.Println("No hay mutaciones pendientes en el outbox.")
+				return
+			}
+
+			fmt.Printf("%-6s %-12s %-10s %-10s %-10s %s\n", "ID", "TICKET", "TIPO", "ESTADO", "INTENTOS", "CLIENT_ID")
+			fmt.Println(strings.Repeat("─", 75))
+			for _, it := range items {
+				fmt.Printf("%-6d %-12s %-10s %-10s %-10d %s\n", it.ID, it.TicketRef, it.MutationType, it.State, it.Attempts, it.ClientID)
+			}
+		},
+	}
+	outboxListCmd.Flags().BoolVarP(&outboxListAllFlag, "all", "a", false, "Incluir mutaciones enviadas o fallidas además de pendientes")
+
+	outboxDropCmd := &cobra.Command{
+		Use:   "drop <ID>",
+		Short: "Elimina un registro atascado de la cola outbox",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+
+			var id int64
+			if _, err := fmt.Sscanf(args[0], "%d", &id); err != nil {
+				errors.EmitErrorWithDetail(fmt.Errorf("el ID debe ser un número entero"), errors.ErrorDetail{
+					Code:     "INVALID_ARG",
+					Category: errors.CategoryUserInput,
+				}, errors.ExitUsageError, jsonFlag)
+			}
+
+			if err := svc.DropOutbox(ctx, id); err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "DROP_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(map[string]interface{}{"status": "dropped", "id": id}, true)
+				return
+			}
+
+			fmt.Printf("✓ Mutación %d descartada del outbox.\n", id)
+		},
+	}
+
+	ticketOutboxCmd.AddCommand(outboxListCmd, outboxDropCmd)
+
+	ticketCmd.AddCommand(ticketListCmd, ticketSearchCmd, ticketGetCmd, ticketCreateCmd, ticketUpdateCmd, ticketSyncCmd, ticketWhoamiCmd, ticketLabelsCmd, ticketDeleteCmd, ticketLinkCmd, ticketFocusCmd, ticketProjectsCmd, ticketStatesCmd, ticketCommentCmd, ticketOutboxCmd)
 
 	return ticketCmd
 }

@@ -374,3 +374,60 @@ func TestStore_P1_DatesAndLifecycleMetadata(t *testing.T) {
 		t.Fatalf("se esperaba 1 tarea archivada (OMNIFY-302), obtenidos: %d", len(archivedIssues))
 	}
 }
+
+func TestStore_CommentsSnapshot_And_AssignmentEvents(t *testing.T) {
+	store, err := sqlite.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("error abriendo store: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// 1. Guardar y recuperar comentarios snapshot
+	comments := []issue.CommentRecord{
+		{
+			ID:          "cmt-1",
+			CommentHTML: "<p>Primer comentario</p>",
+			Actor:       "johan",
+			CreatedBy:   "johan",
+		},
+		{
+			ID:          "cmt-2",
+			CommentHTML: "<p>Bitácora</p><!-- PLANE_WORKLOG_METADATA {\"duration_minutes\": 60} -->",
+			Actor:       "johan",
+			CreatedBy:   "johan",
+		},
+	}
+
+	if err := store.SaveCommentsSnapshot(ctx, "OMNIFY-400", comments); err != nil {
+		t.Fatalf("error SaveCommentsSnapshot: %v", err)
+	}
+
+	loadedComments, err := store.GetCommentsSnapshot(ctx, "OMNIFY-400")
+	if err != nil {
+		t.Fatalf("error GetCommentsSnapshot: %v", err)
+	}
+	if len(loadedComments) != 2 {
+		t.Fatalf("se esperaban 2 comentarios, obtenidos: %d", len(loadedComments))
+	}
+	if loadedComments[0].ID != "cmt-1" || loadedComments[1].ID != "cmt-2" {
+		t.Errorf("IDs de comentarios inesperados: %+v", loadedComments)
+	}
+
+	// 2. Historial de asignaciones
+	if err := store.RecordAssignmentEvent(ctx, "OMNIFY-400", "usr-alice"); err != nil {
+		t.Fatalf("error RecordAssignmentEvent 1: %v", err)
+	}
+	if err := store.RecordAssignmentEvent(ctx, "OMNIFY-400", "usr-bob"); err != nil {
+		t.Fatalf("error RecordAssignmentEvent 2: %v", err)
+	}
+
+	events, err := store.GetAssignmentEvents(ctx, "OMNIFY-400")
+	if err != nil {
+		t.Fatalf("error GetAssignmentEvents: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("se esperaban 2 eventos de asignación, obtenidos: %d", len(events))
+	}
+}

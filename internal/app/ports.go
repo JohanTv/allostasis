@@ -48,6 +48,7 @@ type IssueStore interface {
 
 	// Outbox
 	EnqueueOutbox(ctx context.Context, clientID, ticketRef, payloadJSON, targetWS string) error
+	EnqueueOutboxWithMutation(ctx context.Context, clientID, ticketRef, payloadJSON, targetWS, mutationType string) error
 	ListOutbox(ctx context.Context, includeAll bool) ([]issue.OutboxRecord, error)
 	DropOutboxItem(ctx context.Context, id int64) error
 	UpdateOutboxSent(ctx context.Context, id int64, planeCommentID string) error
@@ -58,6 +59,10 @@ type IssueStore interface {
 	// Worklogs locales
 	GetTicketWorklogs(ctx context.Context, ticketID string) ([]issue.WorklogRecord, error)
 
+	// Instantáneas y Comentarios
+	SaveCommentsSnapshot(ctx context.Context, ticketID string, comments []issue.CommentRecord) error
+	GetCommentsSnapshot(ctx context.Context, ticketID string) ([]issue.CommentRecord, error)
+
 	// Reportes
 	GetTimeReport(ctx context.Context, fromDate, toDate, track, workerType string) (*issue.TimeReport, error)
 	GetFlowReport(ctx context.Context, fromDate, toDate string) (*issue.FlowReport, error)
@@ -66,6 +71,7 @@ type IssueStore interface {
 	SaveUserProfile(ctx context.Context, profile issue.UserInfo) error
 	GetUserProfile(ctx context.Context) (*issue.UserInfo, error)
 	RecordAssignmentEvent(ctx context.Context, ticketID, userID string) error
+	GetAssignmentEvents(ctx context.Context, ticketID string) ([]issue.AssignmentEvent, error)
 }
 
 // WorklogStore define el contrato para el ledger soberano de tiempo e intervalos.

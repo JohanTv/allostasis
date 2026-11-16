@@ -4,10 +4,13 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/allostasis/alo/internal/adapters/sqlite"
 	"github.com/allostasis/alo/internal/app"
+	"github.com/allostasis/alo/internal/domain/clock"
 	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/allostasis/alo/internal/domain/ledger"
 )
 
 func TestTrackerService_CRUD_LocalFirst(t *testing.T) {
@@ -272,5 +275,175 @@ func TestTrackerService_Delete_Safeguards(t *testing.T) {
 	deletedItem, err := store.GetIssue(ctx, "OMNIFY-100")
 	if err == nil && deletedItem != nil {
 		t.Fatalf("el ticket debería haberse eliminado localmente")
+	}
+}
+
+func TestTrackerService_Comments_And_History(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("error abriendo store: %v", err)
+	}
+	defer store.Close()
+
+	// Crear issue existente
+	item := &issue.WorkItem{
+		ID:         "iss-remote-555",
+		Key:        "OMNIFY-555",
+		ProjectID:  "proj-omnify",
+		Title:      "Investigar latencia en sync",
+		State:      issue.StateStarted,
+		StateName:  "En Progreso",
+		Priority:   "high",
+		CreatedBy:  "usr-johan",
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+	if err := store.SaveIssue(ctx, item); err != nil {
+		t.Fatalf("error guardando issue: %v", err)
+	}
+
+	mockClient := &mockTrackerClient{
+		comments: map[string][]issue.CommentRecord{
+			"iss-remote-555": {
+				{
+					ID:          "cmt-1",
+					CommentHTML: "<p>Comentario inicial remoto</p>",
+					Actor:       "usr-alice",
+				},
+			},
+		},
+	}
+	svc := app.NewTrackerService(store, mockClient)
+
+	// 1. Añadir comentario sin horas (online)
+	cmt1, err := svc.AddComment(ctx, "OMNIFY-555", "Comentario de prueba", 0, "", "")
+	if err != nil {
+		t.Fatalf("error AddComment: %v", err)
+	}
+	if cmt1.ID != "comment-remote-999" {
+		t.Errorf("ID retornado inesperado: %s", cmt1.ID)
+	}
+	sentPayload := mockClient.sentComments["iss-remote-555"]
+	if !strings.Contains(sentPayload, "Comentario de prueba") {
+		t.Errorf("payload enviado a Plane inesperado: %s", sentPayload)
+	}
+
+	// 2. Añadir bitácora con horas
+	cmt2, err := svc.AddComment(ctx, "OMNIFY-555", "Sesión de profiling y benchmarking", 1.5, "10:00", "main")
+	if err != nil {
+		t.Fatalf("error AddComment con horas: %v", err)
+	}
+	if !strings.Contains(cmt2.CommentHTML, "PLANE_WORKLOG_METADATA") {
+		t.Errorf("se esperaba bloque de metadatos en comentario: %s", cmt2.CommentHTML)
+	}
+	if !strings.Contains(cmt2.CommentHTML, `"duration_minutes":90`) {
+		t.Errorf("se esperaban 90 minutos en metadatos: %s", cmt2.CommentHTML)
+	}
+
+	// Verificar que el worklog también se persistió localmente
+	worklogs, err := store.GetTicketWorklogs(ctx, "OMNIFY-555")
+	if err != nil || len(worklogs) == 0 {
+		t.Fatalf("no se persistió el worklog localmente: %v (len=%d)", err, len(worklogs))
+	}
+	if worklogs[0].DurationMinutes != 90 {
+		t.Errorf("duración inesperada en worklog local: %d", worklogs[0].DurationMinutes)
+	}
+
+	// 3. GetComments (online y offline)
+	onlineComments, err := svc.GetComments(ctx, "OMNIFY-555", 10, false)
+	if err != nil {
+		t.Fatalf("error GetComments online: %v", err)
+	}
+	if len(onlineComments) == 0 {
+		t.Fatalf("se esperaban comentarios remotos cacheados")
+	}
+
+	offlineComments, err := svc.GetComments(ctx, "OMNIFY-555", 1, true)
+	if err != nil {
+		t.Fatalf("error GetComments offline: %v", err)
+	}
+	if len(offlineComments) != 1 {
+		t.Errorf("se esperaba 1 comentario con limit=1, obtenidos: %d", len(offlineComments))
+	}
+
+	// 4. GetHistory
+	if err := store.RecordAssignmentEvent(ctx, "OMNIFY-555", "usr-johan"); err != nil {
+		t.Fatalf("error RecordAssignmentEvent: %v", err)
+	}
+	hist, err := svc.GetHistory(ctx, "OMNIFY-555")
+	if err != nil {
+		t.Fatalf("error GetHistory: %v", err)
+	}
+	if len(hist.Assignments) != 1 {
+		t.Errorf("se esperaba 1 asignación en historial, obtenidos: %d", len(hist.Assignments))
+	}
+	if len(hist.Worklogs) != 1 {
+		t.Errorf("se esperaba 1 worklog en historial, obtenidos: %d", len(hist.Worklogs))
+	}
+
+	// 5. Update con asignación y etiquetas
+	newAssignee := "usr-alice"
+	newLabels := []string{"performance", "database"}
+	newDesc := "Descripción actualizada"
+	updated, err := svc.Update(ctx, "OMNIFY-555", issue.UpdateIssueInput{
+		Assignee:    &newAssignee,
+		Labels:      &newLabels,
+		Description: &newDesc,
+	})
+	if err != nil {
+		t.Fatalf("error Update: %v", err)
+	}
+	if updated.Assignee != "usr-alice" || updated.Description != "Descripción actualizada" {
+		t.Errorf("campos no actualizados correctamente: %+v", updated)
+	}
+	if len(updated.Labels) != 2 || updated.Labels[0] != "performance" {
+		t.Errorf("etiquetas no actualizadas: %+v", updated.Labels)
+	}
+}
+
+func TestCockpitService_LogTime_Outbox(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("error abriendo store: %v", err)
+	}
+	defer store.Close()
+
+	clk := clock.NewFrozenClock(time.Date(2026, 11, 16, 17, 30, 0, 0, time.UTC))
+	svc := app.NewCockpitService(store, store, nil, clk)
+
+	// Registrar tiempo con alo log
+	err = svc.LogTime(ctx, "OMNIFY-777", 45, ledger.BucketDeepWork, "Optimizando consultas SQL")
+	if err != nil {
+		t.Fatalf("error LogTime: %v", err)
+	}
+
+	// 1. Verificar worklog en SQLite
+	intervals, err := store.GetIntervals(ctx)
+	if err != nil || len(intervals) != 1 {
+		t.Fatalf("se esperaba 1 intervalo en ledger, obtenidos: %d (%v)", len(intervals), err)
+	}
+	if intervals[0].Minutes() != 45 {
+		t.Errorf("duración esperada 45 min, obtenida: %d", intervals[0].Minutes())
+	}
+
+	// 2. Verificar que se encoló la bitácora transaccional en outbox
+	outboxItems, err := store.ListOutbox(ctx, true)
+	if err != nil || len(outboxItems) != 1 {
+		t.Fatalf("se esperaba 1 item en outbox, obtenidos: %d (%v)", len(outboxItems), err)
+	}
+	item := outboxItems[0]
+	if item.TicketRef != "OMNIFY-777" {
+		t.Errorf("ticketRef incorrecto en outbox: %s", item.TicketRef)
+	}
+	if item.MutationType != "comment" {
+		t.Errorf("mutationType esperado 'comment', obtenido: %s", item.MutationType)
+	}
+	if !strings.Contains(item.PayloadJSON, "PLANE_WORKLOG_METADATA") {
+		t.Errorf("se esperaba metadata de Plane en payload del outbox: %s", item.PayloadJSON)
+	}
+	if !strings.Contains(item.PayloadJSON, "duration_minutes") || !strings.Contains(item.PayloadJSON, "45") {
+		t.Errorf("se esperaban 45 minutos en payload del outbox: %s", item.PayloadJSON)
 	}
 }

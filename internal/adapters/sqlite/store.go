@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -297,6 +298,10 @@ func (s *Store) migrateBaseline() error {
 	_, _ = s.db.Exec(`ALTER TABLE assignment_events ADD COLUMN recorded_at REAL NOT NULL DEFAULT 0`)
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_assignment_events_user ON assignment_events(user_id)`)
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_assignment_events_ticket ON assignment_events(ticket_id)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_states_project ON states(project_id)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_labels_project ON labels(project_id)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_outbox_state ON outbox(state, id)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_issues_proj ON issues_cache(project_id, state_group)`)
 	_, _ = s.db.Exec(`CREATE TABLE IF NOT EXISTS user_profile (id TEXT PRIMARY KEY, username TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '', display_name TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL DEFAULT 0)`)
 	return nil
 }
@@ -612,6 +617,52 @@ func (s *Store) SaveIssueSnapshot(ctx context.Context, issueID, ticketID, issueJ
 	            issue_json=excluded.issue_json`
 	_, err := s.db.ExecContext(ctx, query, issueID, ticketID, nowUnix, issueJSON)
 	return err
+}
+
+// SaveCommentsSnapshot persiste la instantánea JSON de comentarios asociados a una tarea.
+func (s *Store) SaveCommentsSnapshot(ctx context.Context, ticketID string, comments []issue.CommentRecord) error {
+	commentsJSON, err := json.Marshal(comments)
+	if err != nil {
+		return err
+	}
+	nowUnix := float64(time.Now().Unix())
+	targetID := ticketID
+	var resolvedID string
+	err = s.reader.QueryRowContext(ctx, `SELECT id FROM issues_cache WHERE ticket_id = ? OR id = ?`, ticketID, ticketID).Scan(&resolvedID)
+	if err == nil && resolvedID != "" {
+		targetID = resolvedID
+	}
+
+	query := `INSERT INTO issue_snapshots(issue_id, ticket_id, fetched_at, issue_json, comments_json, comments_fetched_at)
+	          VALUES(?, ?, ?, '{}', ?, ?)
+	          ON CONFLICT(issue_id) DO UPDATE SET
+	            comments_json=excluded.comments_json,
+	            comments_fetched_at=excluded.comments_fetched_at`
+	_, err = s.db.ExecContext(ctx, query, targetID, ticketID, nowUnix, string(commentsJSON), nowUnix)
+	return err
+}
+
+// GetCommentsSnapshot recupera la instantánea de comentarios guardada para una tarea.
+func (s *Store) GetCommentsSnapshot(ctx context.Context, ticketID string) ([]issue.CommentRecord, error) {
+	query := `SELECT comments_json FROM issue_snapshots 
+	          WHERE ticket_id = ? OR issue_id = ? 
+	          ORDER BY comments_fetched_at DESC LIMIT 1`
+	var rawJSON string
+	err := s.reader.QueryRowContext(ctx, query, ticketID, ticketID).Scan(&rawJSON)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return []issue.CommentRecord{}, nil
+		}
+		return nil, err
+	}
+	if strings.TrimSpace(rawJSON) == "" || rawJSON == "[]" {
+		return []issue.CommentRecord{}, nil
+	}
+	var comments []issue.CommentRecord
+	if err := json.Unmarshal([]byte(rawJSON), &comments); err != nil {
+		return nil, err
+	}
+	return comments, nil
 }
 
 // SaveProject almacena o actualiza la definición de un proyecto.
@@ -1267,7 +1318,16 @@ func (s *Store) ListOutbox(ctx context.Context, includeAll bool) ([]issue.Outbox
 func (s *Store) UpdateOutboxSent(ctx context.Context, id int64, planeCommentID string) error {
 	nowStr := time.Now().Format(time.RFC3339)
 	_, err := s.db.ExecContext(ctx, `UPDATE outbox SET state = 'sent', plane_comment_id = ?, sent_at = ?, attempts = attempts + 1 WHERE id = ?`, planeCommentID, nowStr, id)
-	return err
+	if err != nil {
+		return err
+	}
+	if planeCommentID != "" {
+		// Vincular también el worklog local pendiente para mantener consistencia
+		_, _ = s.db.ExecContext(ctx, `UPDATE worklogs SET plane_comment_id = ? 
+		      WHERE ticket_id = (SELECT ticket_ref FROM outbox WHERE id = ?) 
+		        AND (plane_comment_id IS NULL OR plane_comment_id = '')`, planeCommentID, id)
+	}
+	return nil
 }
 
 // UpdateOutboxFailed marca un registro outbox como fallido registrando el error correspondiente.
@@ -1532,4 +1592,30 @@ func (s *Store) GetUserProfile(ctx context.Context) (*issue.UserInfo, error) {
 		return nil, err
 	}
 	return &u, nil
+}
+
+// GetAssignmentEvents consulta el historial de eventos de asignación de una tarea.
+func (s *Store) GetAssignmentEvents(ctx context.Context, ticketID string) ([]issue.AssignmentEvent, error) {
+	query := `SELECT event_id, issue_id, ticket_id, at_utc, kind, user_id, user_name, recorded_at 
+	          FROM assignment_events 
+	          WHERE ticket_id = ? OR issue_id = ? 
+	          ORDER BY at_utc ASC, recorded_at ASC`
+	rows, err := s.reader.QueryContext(ctx, query, ticketID, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []issue.AssignmentEvent
+	for rows.Next() {
+		var e issue.AssignmentEvent
+		if err := rows.Scan(&e.EventID, &e.IssueID, &e.TicketID, &e.AtUTC, &e.Kind, &e.UserID, &e.UserName, &e.RecordedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, e)
+	}
+	if events == nil {
+		events = []issue.AssignmentEvent{}
+	}
+	return events, rows.Err()
 }

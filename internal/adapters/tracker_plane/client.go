@@ -742,6 +742,16 @@ func (c *Client) UpdateIssueRemote(ctx context.Context, projectID, issueID strin
 	if input.Description != nil {
 		payloadMap["description_html"] = fmt.Sprintf("<p>%s</p>", *input.Description)
 	}
+	if input.Assignee != nil {
+		if *input.Assignee != "" {
+			payloadMap["assignees"] = []string{*input.Assignee}
+		} else {
+			payloadMap["assignees"] = []string{}
+		}
+	}
+	if input.Labels != nil {
+		payloadMap["labels"] = *input.Labels
+	}
 	if input.StartDate != nil {
 		payloadMap["start_date"] = *input.StartDate
 	}

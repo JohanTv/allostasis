@@ -61,6 +61,7 @@ type UpdateIssueInput struct {
 	Description *string   `json:"description,omitempty"`
 	StateName   *string   `json:"state_name,omitempty"`
 	Priority    *string   `json:"priority,omitempty"`
+	Assignee    *string   `json:"assignee,omitempty"`
 	Labels      *[]string `json:"labels,omitempty"`
 	StartDate   *string   `json:"start_date,omitempty"`
 	TargetDate  *string   `json:"target_date,omitempty"`
@@ -131,6 +132,27 @@ type CommentRecord struct {
 	CommentHTML string `json:"comment_html"`
 	Actor       string `json:"actor,omitempty"`
 	CreatedBy   string `json:"created_by,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
+}
+
+// AssignmentEvent modela una mutación o registro histórico de asignación sobre un ticket.
+type AssignmentEvent struct {
+	EventID    string  `json:"event_id"`
+	IssueID    string  `json:"issue_id"`
+	TicketID   string  `json:"ticket_id"`
+	AtUTC      string  `json:"at_utc"`
+	Kind       string  `json:"kind"`
+	UserID     string  `json:"user_id"`
+	UserName   string  `json:"user_name,omitempty"`
+	RecordedAt float64 `json:"recorded_at"`
+}
+
+// TicketHistory consolida la historia temporal de una tarea (asignaciones y sesiones de esfuerzo).
+type TicketHistory struct {
+	TicketID    string            `json:"ticket_id"`
+	Assignments []AssignmentEvent `json:"assignments"`
+	Worklogs    []WorklogRecord   `json:"worklogs"`
 }
 
 // Attachment modela un archivo adjunto subido a Plane CE.

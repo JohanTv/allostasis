@@ -3,9 +3,13 @@ package main_test
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/allostasis/alo/internal/domain/issue"
 )
 
 func TestCLI_VersionJSONContract(t *testing.T) {
@@ -234,5 +238,115 @@ func TestCLI_TicketList_BriefOutput(t *testing.T) {
 				t.Errorf("brief output no debe incluir cabeceras de tabla: %s", l)
 			}
 		}
+	}
+}
+
+func TestCLI_TicketComment_And_GetFlags(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "worklogs.db")
+
+	runAlo := func(args ...string) ([]byte, error) {
+		cmdArgs := append([]string{"run", "./cmd/alo"}, args...)
+		cmd := exec.Command("go", cmdArgs...)
+		cmd.Dir = "../.."
+		cmd.Env = append(os.Environ(), "PLANE_DB_PATH="+dbPath)
+		return cmd.CombinedOutput()
+	}
+
+	// 1. Crear tarea local
+	out, err := runAlo("ticket", "create", "Tarea para auditoría de comentarios", "--project", "TEST", "--start-date", "2026-11-01", "--due-date", "2026-11-10", "--json")
+	if err != nil {
+		t.Fatalf("error creando tarea: %v (out: %s)", err, string(out))
+	}
+	var createdEnvelope struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &createdEnvelope); err != nil || createdEnvelope.Data.Key == "" {
+		t.Fatalf("error parseando respuesta de create: %v (out: %s)", err, string(out))
+	}
+	ticketKey := createdEnvelope.Data.Key
+
+	// 2. Actualizar tarea con --desc, --assign y --labels
+	out, err = runAlo("ticket", "update", ticketKey, "--desc", "Descripción detallada", "--assign", "usr-tester", "--labels", "qa,audit", "--json")
+	if err != nil {
+		t.Fatalf("error actualizando tarea: %v (out: %s)", err, string(out))
+	}
+	var updateEnvelope struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Description string   `json:"description"`
+			Assignee    string   `json:"assignee"`
+			Labels      []string `json:"labels"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &updateEnvelope); err != nil {
+		t.Fatalf("error parseando update: %v (out: %s)", err, string(out))
+	}
+	if updateEnvelope.Data.Description != "Descripción detallada" || updateEnvelope.Data.Assignee != "usr-tester" {
+		t.Errorf("datos no coinciden en update: %+v", updateEnvelope.Data)
+	}
+
+	// 3. Añadir comentario con horas (bitácora)
+	out, err = runAlo("ticket", "comment", "add", ticketKey, "Trabajo en endpoints", "--hours", "1.5", "--start-time", "14:00", "--json")
+	if err != nil {
+		t.Fatalf("error añadiendo comentario: %v (out: %s)", err, string(out))
+	}
+
+	// 4. Listar comentarios con alo ticket comment list
+	out, err = runAlo("ticket", "comment", "list", ticketKey, "--json")
+	if err != nil {
+		t.Fatalf("error listando comentarios: %v (out: %s)", err, string(out))
+	}
+	var commentsEnvelope struct {
+		OK   bool                  `json:"ok"`
+		Data []issue.CommentRecord `json:"data"`
+	}
+	if err := json.Unmarshal(out, &commentsEnvelope); err != nil || len(commentsEnvelope.Data) == 0 {
+		t.Fatalf("error parseando comentarios: %v (out: %s)", err, string(out))
+	}
+
+	// 5. Verificar get con --last y --history
+	out, err = runAlo("ticket", "get", ticketKey, "--last", "5", "--history", "--offline", "--json")
+	if err != nil {
+		t.Fatalf("error ejecutando get enriquecido: %v (out: %s)", err, string(out))
+	}
+	var getEnvelope struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Item     issue.WorkItem        `json:"item"`
+			Comments []issue.CommentRecord `json:"comments"`
+			History  *issue.TicketHistory  `json:"history"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &getEnvelope); err != nil {
+		t.Fatalf("error parseando get enriquecido: %v (out: %s)", err, string(out))
+	}
+	if len(getEnvelope.Data.Comments) == 0 {
+		t.Errorf("se esperaban comentarios en get enriquecido")
+	}
+	if getEnvelope.Data.History == nil || len(getEnvelope.Data.History.Assignments) == 0 {
+		t.Errorf("se esperaban asignaciones en historial")
+	}
+
+	// 6. Probar alo log vinculando con outbox
+	out, err = runAlo("log", ticketKey, "45", "Prueba de esfuerzo", "--json")
+	if err != nil {
+		t.Fatalf("error ejecutando alo log: %v (out: %s)", err, string(out))
+	}
+
+	// 7. Verificar que el outbox contiene la mutación de tipo comment
+	out, err = runAlo("ticket", "outbox", "list", "--all", "--json")
+	if err != nil {
+		t.Fatalf("error listando outbox: %v (out: %s)", err, string(out))
+	}
+	var outboxEnvelope struct {
+		OK   bool                 `json:"ok"`
+		Data []issue.OutboxRecord `json:"data"`
+	}
+	if err := json.Unmarshal(out, &outboxEnvelope); err != nil || len(outboxEnvelope.Data) < 2 {
+		t.Fatalf("se esperaban al menos 2 registros en outbox (creación y log), obtenidos: %d (out: %s)", len(outboxEnvelope.Data), string(out))
 	}
 }

@@ -2,9 +2,11 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/allostasis/alo/internal/domain/clock"
@@ -154,7 +156,7 @@ func (s *CockpitService) GetSnapshot(ctx context.Context, worktreeRoot string) (
 	}, nil
 }
 
-// LogTime registra una sesión en el ledger.
+// LogTime registra una sesión en el ledger y encola el comentario/bitácora estructurado en outbox hacia Plane CE.
 func (s *CockpitService) LogTime(ctx context.Context, ticketID string, durationMins int, bucket ledger.CapacityBucket, notes string) error {
 	now := s.clock.Now()
 	startTime := now.Add(-time.Duration(durationMins) * time.Minute)
@@ -169,5 +171,30 @@ func (s *CockpitService) LogTime(ctx context.Context, ticketID string, durationM
 		Topic:  notes,
 	}
 
-	return s.worklogStore.SaveWorklog(ctx, entry)
+	if err := s.worklogStore.SaveWorklog(ctx, entry); err != nil {
+		return err
+	}
+
+	// Encolar bitácora transaccional en outbox hacia Plane CE con bloque PLANE_WORKLOG_METADATA
+	if s.issueStore != nil {
+		dateStr := startTime.Format("2006-01-02")
+		startStr := startTime.Format("15:04")
+		endStr := now.Format("15:04")
+		bodyText := strings.TrimSpace(notes)
+		if bodyText == "" {
+			bodyText = fmt.Sprintf("Sesión de trabajo (%d min)", durationMins)
+		}
+
+		commentHTML := fmt.Sprintf("<p>%s</p>\n<!-- PLANE_WORKLOG_METADATA\n{\n  \"version\": \"1.0\",\n  \"date\": \"%s\",\n  \"start_time\": \"%s\",\n  \"end_time\": \"%s\",\n  \"duration_minutes\": %d,\n  \"capacity_bucket\": \"%s\"\n}\n-->",
+			bodyText, dateStr, startStr, endStr, durationMins, string(bucket))
+
+		payload := map[string]string{
+			"comment_html": commentHTML,
+		}
+		payloadBytes, _ := json.Marshal(payload)
+		clientID := fmt.Sprintf("log-%s-%d", ticketID, now.UnixNano())
+		_ = s.issueStore.EnqueueOutboxWithMutation(ctx, clientID, ticketID, string(payloadBytes), "", "comment")
+	}
+
+	return nil
 }
