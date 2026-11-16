@@ -261,3 +261,116 @@ func TestStore_InMemoryIntegration(t *testing.T) {
 		t.Errorf("estado 'Revisión' no encontrado o grupo incorrecto")
 	}
 }
+
+func TestStore_P1_DatesAndLifecycleMetadata(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("error abriendo store: %v", err)
+	}
+	defer store.Close()
+
+	now := time.Now().Truncate(time.Second)
+	completedTime := now.Add(-1 * time.Hour)
+	archivedTime := now.Add(-30 * time.Minute)
+
+	task1 := &issue.WorkItem{
+		ID:          "iss-p1-1",
+		Key:         "OMNIFY-301",
+		ProjectID:   "proj-omnify",
+		Title:       "Tarea con fechas planificadas y completada",
+		StateName:   "Completado",
+		StateGroup:  "completed",
+		State:       issue.StateCompleted,
+		Priority:    "high",
+		StartDate:   "2026-11-01",
+		TargetDate:  "2026-11-15",
+		CompletedAt: &completedTime,
+		CreatedAt:   now.Add(-48 * time.Hour),
+		Labels:      []string{"backend", "p1"},
+	}
+
+	task2 := &issue.WorkItem{
+		ID:         "iss-p1-2",
+		Key:        "OMNIFY-302",
+		ProjectID:  "proj-omnify",
+		Title:      "Tarea archivada",
+		StateName:  "Archivado",
+		StateGroup: "cancelled",
+		State:      issue.StateCancelled,
+		Priority:   "low",
+		ArchivedAt: &archivedTime,
+		CreatedAt:  now.Add(-24 * time.Hour),
+	}
+
+	task3 := &issue.WorkItem{
+		ID:         "iss-p1-3",
+		Key:        "OMNIFY-303",
+		ProjectID:  "proj-omnify",
+		Title:      "Tarea abierta activa",
+		StateName:  "En Progreso",
+		StateGroup: "started",
+		State:      issue.StateStarted,
+		Priority:   "urgent",
+		StartDate:  "2026-11-10",
+		TargetDate: "2026-11-20",
+		CreatedAt:  now.Add(-12 * time.Hour),
+	}
+
+	if err := store.SaveIssue(ctx, task1); err != nil {
+		t.Fatalf("error guardando task1: %v", err)
+	}
+	if err := store.SaveIssue(ctx, task2); err != nil {
+		t.Fatalf("error guardando task2: %v", err)
+	}
+	if err := store.SaveIssue(ctx, task3); err != nil {
+		t.Fatalf("error guardando task3: %v", err)
+	}
+
+	// 1. Verificar GetIssue con metadatos completos
+	loaded1, err := store.GetIssue(ctx, "OMNIFY-301")
+	if err != nil {
+		t.Fatalf("error GetIssue: %v", err)
+	}
+	if loaded1.StartDate != "2026-11-01" || loaded1.TargetDate != "2026-11-15" {
+		t.Errorf("fechas planificadas incorrectas: StartDate=%s, TargetDate=%s", loaded1.StartDate, loaded1.TargetDate)
+	}
+	if loaded1.CompletedAt == nil || !loaded1.CompletedAt.Equal(completedTime) {
+		t.Errorf("CompletedAt incorrecto: %v", loaded1.CompletedAt)
+	}
+	if len(loaded1.Labels) != 2 || loaded1.Labels[0] != "backend" {
+		t.Errorf("Labels incorrectos: %v", loaded1.Labels)
+	}
+
+	loaded2, err := store.GetIssue(ctx, "OMNIFY-302")
+	if err != nil {
+		t.Fatalf("error GetIssue: %v", err)
+	}
+	if loaded2.ArchivedAt == nil || !loaded2.ArchivedAt.Equal(archivedTime) {
+		t.Errorf("ArchivedAt incorrecto: %v", loaded2.ArchivedAt)
+	}
+
+	// 2. Verificar que OpenOnly excluye tareas completadas y archivadas
+	openIssues, err := store.ListIssuesFiltered(ctx, issue.IssueFilter{
+		ProjectKey: "OMNIFY",
+		OpenOnly:   true,
+	})
+	if err != nil {
+		t.Fatalf("error ListIssuesFiltered OpenOnly: %v", err)
+	}
+	if len(openIssues) != 1 || openIssues[0].Key != "OMNIFY-303" {
+		t.Fatalf("se esperaba solo 1 tarea abierta (OMNIFY-303), obtenidos: %d (%+v)", len(openIssues), openIssues)
+	}
+
+	// 3. Verificar filtro ArchivedOnly
+	archivedIssues, err := store.ListIssuesFiltered(ctx, issue.IssueFilter{
+		ProjectKey:   "OMNIFY",
+		ArchivedOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("error ListIssuesFiltered ArchivedOnly: %v", err)
+	}
+	if len(archivedIssues) != 1 || archivedIssues[0].Key != "OMNIFY-302" {
+		t.Fatalf("se esperaba 1 tarea archivada (OMNIFY-302), obtenidos: %d", len(archivedIssues))
+	}
+}

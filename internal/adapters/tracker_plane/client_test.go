@@ -64,8 +64,8 @@ func TestClient_TrackerOperations(t *testing.T) {
 
 		case r.URL.Path == "/api/v1/workspaces/test-workspace/projects/proj-omnify/issues/" && r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(`{"results":[
-				{"id":"iss-1","sequence_id":269,"name":"[FEAT] Canal de atención Facebook Messenger e Instagram DM","priority":"high","state_detail":{"name":"Backlog","group":"backlog"},"labels":["backend","feat"]},
-				{"id":"iss-2","sequence_id":270,"name":"[FEAT] Segundo canal","priority":"medium","state":"st-prog","assignees":["usr-1"],"labels":["frontend"]}
+				{"id":"iss-1","sequence_id":269,"name":"[FEAT] Canal de atención Facebook Messenger e Instagram DM","priority":"high","state_detail":{"name":"Backlog","group":"backlog"},"labels":["backend","feat"],"start_date":"2026-10-01","target_date":"2026-10-27","completed_at":"2026-10-15T12:00:00Z"},
+				{"id":"iss-2","sequence_id":270,"name":"[FEAT] Segundo canal","priority":"medium","state":"st-prog","assignees":["usr-1"],"labels":["frontend"],"archived_at":"2026-10-20T10:00:00Z"}
 			]}`))
 
 		case r.URL.Path == "/api/v1/workspaces/test-workspace/projects/proj-omnify/issues/" && r.Method == http.MethodPost:
@@ -136,6 +136,15 @@ func TestClient_TrackerOperations(t *testing.T) {
 	}
 	if len(issues) != 2 || issues[0].Item.Key != "OMNIFY-269" {
 		t.Errorf("issues inesperados: %+v", issues)
+	}
+	if issues[0].Item.StartDate != "2026-10-01" || issues[0].Item.TargetDate != "2026-10-27" {
+		t.Errorf("fechas planificadas incorrectas en FetchIssues: StartDate=%s, TargetDate=%s", issues[0].Item.StartDate, issues[0].Item.TargetDate)
+	}
+	if issues[0].Item.CompletedAt == nil {
+		t.Errorf("CompletedAt debió extraerse para iss-1")
+	}
+	if issues[1].Item.ArchivedAt == nil {
+		t.Errorf("ArchivedAt debió extraerse para iss-2")
 	}
 	if issues[1].Item.StateName != "Progreso" || issues[1].Item.StateGroup != "started" {
 		t.Errorf("estado resuelto inesperado para iss-2: %s (%s)", issues[1].Item.StateName, issues[1].Item.StateGroup)

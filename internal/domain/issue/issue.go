@@ -34,6 +34,10 @@ type WorkItem struct {
 	CreatedBy       string     `json:"created_by,omitempty"`
 	Labels          []string   `json:"labels,omitempty"`
 	LabelsCSV       string     `json:"labels_csv,omitempty"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
+	StartDate       string     `json:"start_date,omitempty"`
+	TargetDate      string     `json:"target_date,omitempty"`
+	ArchivedAt      *time.Time `json:"archived_at,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
 	RemoteUpdatedAt *time.Time `json:"remote_updated_at,omitempty"`
@@ -47,6 +51,8 @@ type CreateIssueInput struct {
 	Priority    string   `json:"priority,omitempty"`
 	StateName   string   `json:"state_name,omitempty"`
 	Labels      []string `json:"labels,omitempty"`
+	StartDate   string   `json:"start_date,omitempty"`
+	TargetDate  string   `json:"target_date,omitempty"`
 }
 
 // UpdateIssueInput encapsula las mutaciones permitidas sobre una tarea existente.
@@ -56,20 +62,23 @@ type UpdateIssueInput struct {
 	StateName   *string   `json:"state_name,omitempty"`
 	Priority    *string   `json:"priority,omitempty"`
 	Labels      *[]string `json:"labels,omitempty"`
+	StartDate   *string   `json:"start_date,omitempty"`
+	TargetDate  *string   `json:"target_date,omitempty"`
 }
 
 // IssueFilter define criterios de consulta y paginación.
 type IssueFilter struct {
-	ProjectKey string
-	State      string
-	StateGroup string
-	Assignee   string
-	CreatedBy  string
-	InvolvedBy string
-	OpenOnly   bool
-	Query      string
-	Limit      int
-	Offset     int
+	ProjectKey   string
+	State        string
+	StateGroup   string
+	Assignee     string
+	CreatedBy    string
+	InvolvedBy   string
+	OpenOnly     bool
+	ArchivedOnly bool
+	Query        string
+	Limit        int
+	Offset       int
 }
 
 // OutboxStatus modela la máquina de estados de sincronización idempotente del Outbox.

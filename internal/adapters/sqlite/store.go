@@ -157,6 +157,10 @@ func (s *Store) migrateBaseline() error {
 		created_by TEXT NOT NULL DEFAULT '',
 		created_at TEXT NOT NULL DEFAULT '',
 		remote_updated_at TEXT NOT NULL DEFAULT '',
+		completed_at TEXT NOT NULL DEFAULT '',
+		start_date TEXT NOT NULL DEFAULT '',
+		target_date TEXT NOT NULL DEFAULT '',
+		archived_at TEXT NOT NULL DEFAULT '',
 		updated_at REAL NOT NULL DEFAULT 0
 	);
 
@@ -278,7 +282,13 @@ func (s *Store) migrateBaseline() error {
 	_, _ = s.db.Exec(`ALTER TABLE outbox ADD COLUMN mutation_type TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.Exec(`ALTER TABLE issues_cache ADD COLUMN created_by TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.Exec(`ALTER TABLE issues_cache ADD COLUMN remote_updated_at TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE issues_cache ADD COLUMN completed_at TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE issues_cache ADD COLUMN start_date TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE issues_cache ADD COLUMN target_date TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE issues_cache ADD COLUMN archived_at TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_issues_created_by ON issues_cache(created_by)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_issues_target_date ON issues_cache(target_date)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_issues_archived ON issues_cache(archived_at)`)
 	_, _ = s.db.Exec(`ALTER TABLE assignment_events ADD COLUMN event_id TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.Exec(`ALTER TABLE assignment_events ADD COLUMN issue_id TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.Exec(`ALTER TABLE assignment_events ADD COLUMN at_utc TEXT NOT NULL DEFAULT ''`)
@@ -291,41 +301,79 @@ func (s *Store) migrateBaseline() error {
 	return nil
 }
 
+const issueSelectFields = `id, ticket_id, project_id, title, state_name, COALESCE(state_group, state_name), priority,
+	COALESCE(assignees_json, ''), COALESCE(created_by, ''), COALESCE(remote_updated_at, ''),
+	COALESCE(completed_at, ''), COALESCE(start_date, ''), COALESCE(target_date, ''), COALESCE(archived_at, ''),
+	COALESCE(created_at, ''), COALESCE(labels_csv, '')`
+
+func scanWorkItem(scan func(dest ...interface{}) error) (*issue.WorkItem, error) {
+	var item issue.WorkItem
+	var stateStr, assigneesJSON, createdBy, remoteUp, completedAt, startDate, targetDate, archivedAt, createdAt, labelsCSV string
+	err := scan(&item.ID, &item.Key, &item.ProjectID, &item.Title, &item.StateName, &stateStr, &item.Priority,
+		&assigneesJSON, &createdBy, &remoteUp,
+		&completedAt, &startDate, &targetDate, &archivedAt,
+		&createdAt, &labelsCSV)
+	if err != nil {
+		return nil, err
+	}
+	item.State = issue.State(stateStr)
+	item.StateGroup = stateStr
+	item.CreatedBy = createdBy
+	item.StartDate = startDate
+	item.TargetDate = targetDate
+	item.LabelsCSV = labelsCSV
+	if labelsCSV != "" {
+		for _, l := range strings.Split(labelsCSV, ",") {
+			l = strings.TrimSpace(l)
+			if l != "" {
+				item.Labels = append(item.Labels, l)
+			}
+		}
+	}
+	if remoteUp != "" {
+		if t, err := time.Parse(time.RFC3339, remoteUp); err == nil {
+			item.RemoteUpdatedAt = &t
+		}
+	}
+	if completedAt != "" {
+		if t, err := time.Parse(time.RFC3339, completedAt); err == nil {
+			item.CompletedAt = &t
+		}
+	}
+	if archivedAt != "" {
+		if t, err := time.Parse(time.RFC3339, archivedAt); err == nil {
+			item.ArchivedAt = &t
+		}
+	}
+	if createdAt != "" {
+		if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+			item.CreatedAt = t
+		}
+	}
+	var assignees []string
+	if err := json.Unmarshal([]byte(assigneesJSON), &assignees); err == nil {
+		item.Assignees = assignees
+		if len(assignees) > 0 {
+			item.Assignee = assignees[0]
+		}
+	} else if assigneesJSON != "" && assigneesJSON != "[]" {
+		item.Assignee = assigneesJSON
+	}
+	return &item, nil
+}
+
 // GetIssue consulta una tarea por su clave (ej. OMNIFY-175) o UUID, extrayendo también su descripción si existe.
 func (s *Store) GetIssue(ctx context.Context, key string) (*issue.WorkItem, error) {
 	key = strings.TrimSpace(strings.ToUpper(key))
-	query := `SELECT id, ticket_id, project_id, title, state_name, COALESCE(state_group, state_name), priority,
-	                 COALESCE(assignees_json, ''), COALESCE(created_by, ''), COALESCE(remote_updated_at, '')
-	          FROM issues_cache WHERE ticket_id = ? OR id = ?`
+	query := fmt.Sprintf(`SELECT %s FROM issues_cache WHERE ticket_id = ? OR id = ?`, issueSelectFields)
 	row := s.reader.QueryRowContext(ctx, query, key, key)
 
-	var item issue.WorkItem
-	var stateStr string
-	var assigneesJSONStr, createdByStr, remoteUpdatedAtStr string
-	err := row.Scan(&item.ID, &item.Key, &item.ProjectID, &item.Title, &item.StateName, &stateStr, &item.Priority,
-		&assigneesJSONStr, &createdByStr, &remoteUpdatedAtStr)
+	item, err := scanWorkItem(row.Scan)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("tarea no encontrada: %s", key)
 		}
 		return nil, err
-	}
-	item.State = issue.State(stateStr)
-	item.StateGroup = stateStr
-	item.CreatedBy = createdByStr
-	if remoteUpdatedAtStr != "" {
-		if t, err := time.Parse(time.RFC3339, remoteUpdatedAtStr); err == nil {
-			item.RemoteUpdatedAt = &t
-		}
-	}
-	var assignees []string
-	if err := json.Unmarshal([]byte(assigneesJSONStr), &assignees); err == nil {
-		item.Assignees = assignees
-		if len(assignees) > 0 {
-			item.Assignee = assignees[0]
-		}
-	} else {
-		item.Assignee = assigneesJSONStr
 	}
 
 	// Enriquecer con descripción desde issue_snapshots si existe
@@ -345,7 +393,7 @@ func (s *Store) GetIssue(ctx context.Context, key string) (*issue.WorkItem, erro
 		}
 	}
 
-	return &item, nil
+	return item, nil
 }
 
 // ListIssues lista tareas por estado.
@@ -355,14 +403,10 @@ func (s *Store) ListIssues(ctx context.Context, state issue.State) ([]issue.Work
 	var err error
 
 	if state != "" {
-		query = `SELECT id, ticket_id, project_id, title, state_name, COALESCE(state_group, state_name), priority,
-		                COALESCE(assignees_json, ''), COALESCE(created_by, ''), COALESCE(remote_updated_at, '')
-		         FROM issues_cache WHERE state_group = ? OR state_name = ? ORDER BY ticket_id ASC`
-		rows, err = s.reader.QueryContext(ctx, query, state, state)
+		query = fmt.Sprintf(`SELECT %s FROM issues_cache WHERE state_group = ? OR state_name = ? ORDER BY ticket_id ASC`, issueSelectFields)
+		rows, err = s.reader.QueryContext(ctx, query, string(state), string(state))
 	} else {
-		query = `SELECT id, ticket_id, project_id, title, state_name, COALESCE(state_group, state_name), priority,
-		                COALESCE(assignees_json, ''), COALESCE(created_by, ''), COALESCE(remote_updated_at, '')
-		         FROM issues_cache ORDER BY ticket_id ASC`
+		query = fmt.Sprintf(`SELECT %s FROM issues_cache ORDER BY ticket_id ASC`, issueSelectFields)
 		rows, err = s.reader.QueryContext(ctx, query)
 	}
 	if err != nil {
@@ -372,30 +416,11 @@ func (s *Store) ListIssues(ctx context.Context, state issue.State) ([]issue.Work
 
 	list := make([]issue.WorkItem, 0)
 	for rows.Next() {
-		var item issue.WorkItem
-		var stateStr string
-		var assigneesJSONStr, createdByStr, remoteUpdatedAtStr string
-		if err := rows.Scan(&item.ID, &item.Key, &item.ProjectID, &item.Title, &item.StateName, &stateStr, &item.Priority, &assigneesJSONStr, &createdByStr, &remoteUpdatedAtStr); err != nil {
+		item, err := scanWorkItem(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		item.State = issue.State(stateStr)
-		item.StateGroup = stateStr
-		item.CreatedBy = createdByStr
-		if remoteUpdatedAtStr != "" {
-			if t, err := time.Parse(time.RFC3339, remoteUpdatedAtStr); err == nil {
-				item.RemoteUpdatedAt = &t
-			}
-		}
-		var assignees []string
-		if err := json.Unmarshal([]byte(assigneesJSONStr), &assignees); err == nil {
-			item.Assignees = assignees
-			if len(assignees) > 0 {
-				item.Assignee = assignees[0]
-			}
-		} else {
-			item.Assignee = assigneesJSONStr
-		}
-		list = append(list, item)
+		list = append(list, *item)
 	}
 	return list, nil
 }
@@ -405,9 +430,7 @@ func (s *Store) ListIssuesFiltered(ctx context.Context, filter issue.IssueFilter
 	if filter.Limit <= 0 {
 		filter.Limit = 50
 	}
-	q := `SELECT id, ticket_id, project_id, title, state_name, COALESCE(state_group, state_name), priority,
-	             COALESCE(assignees_json, ''), COALESCE(created_by, ''), COALESCE(remote_updated_at, '')
-	      FROM issues_cache WHERE 1=1`
+	q := fmt.Sprintf(`SELECT %s FROM issues_cache WHERE 1=1`, issueSelectFields)
 	var args []interface{}
 
 	if filter.ProjectKey != "" {
@@ -424,7 +447,10 @@ func (s *Store) ListIssuesFiltered(ctx context.Context, filter issue.IssueFilter
 		args = append(args, filter.StateGroup)
 	}
 	if filter.OpenOnly {
-		q += ` AND LOWER(TRIM(COALESCE(state_group, ''))) NOT IN ('completed', 'cancelled')`
+		q += ` AND LOWER(TRIM(COALESCE(state_group, ''))) NOT IN ('completed', 'cancelled') AND (archived_at IS NULL OR archived_at = '')`
+	}
+	if filter.ArchivedOnly {
+		q += ` AND archived_at != ''`
 	}
 	if filter.Assignee != "" {
 		q += ` AND assignees_json LIKE ?`
@@ -449,7 +475,7 @@ func (s *Store) ListIssuesFiltered(ctx context.Context, filter issue.IssueFilter
 		args = append(args, likePattern, likePattern)
 	}
 
-	q += ` ORDER BY ticket_id DESC LIMIT ? OFFSET ?`
+	q += ` ORDER BY (CASE WHEN remote_updated_at != '' THEN remote_updated_at ELSE '0' END) DESC, sequence_id DESC, ticket_id DESC LIMIT ? OFFSET ?`
 	args = append(args, filter.Limit, filter.Offset)
 
 	rows, err := s.reader.QueryContext(ctx, q, args...)
@@ -460,30 +486,11 @@ func (s *Store) ListIssuesFiltered(ctx context.Context, filter issue.IssueFilter
 
 	list := make([]issue.WorkItem, 0)
 	for rows.Next() {
-		var item issue.WorkItem
-		var stateStr string
-		var assigneesJSONStr, createdByStr, remoteUpdatedAtStr string
-		if err := rows.Scan(&item.ID, &item.Key, &item.ProjectID, &item.Title, &item.StateName, &stateStr, &item.Priority, &assigneesJSONStr, &createdByStr, &remoteUpdatedAtStr); err != nil {
+		item, err := scanWorkItem(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		item.State = issue.State(stateStr)
-		item.StateGroup = stateStr
-		item.CreatedBy = createdByStr
-		if remoteUpdatedAtStr != "" {
-			if t, err := time.Parse(time.RFC3339, remoteUpdatedAtStr); err == nil {
-				item.RemoteUpdatedAt = &t
-			}
-		}
-		var assignees []string
-		if err := json.Unmarshal([]byte(assigneesJSONStr), &assignees); err == nil {
-			item.Assignees = assignees
-			if len(assignees) > 0 {
-				item.Assignee = assignees[0]
-			}
-		} else {
-			item.Assignee = assigneesJSONStr
-		}
-		list = append(list, item)
+		list = append(list, *item)
 	}
 	return list, nil
 }
@@ -497,7 +504,9 @@ func (s *Store) SearchIssues(ctx context.Context, query string, project string, 
 
 	q := `
 		SELECT c.id, c.ticket_id, c.project_id, c.title, c.state_name, COALESCE(c.state_group, c.state_name), c.priority,
-		       COALESCE(c.assignees_json, ''), COALESCE(s.issue_json, ''), COALESCE(c.created_by, ''), COALESCE(c.remote_updated_at, '')
+		       COALESCE(c.assignees_json, ''), COALESCE(s.issue_json, ''), COALESCE(c.created_by, ''), COALESCE(c.remote_updated_at, ''),
+		       COALESCE(c.completed_at, ''), COALESCE(c.start_date, ''), COALESCE(c.target_date, ''), COALESCE(c.archived_at, ''),
+		       COALESCE(c.created_at, ''), COALESCE(c.labels_csv, '')
 		FROM issues_cache c
 		LEFT JOIN issue_snapshots s ON (c.id = s.issue_id OR c.ticket_id = s.ticket_id)
 		WHERE (c.title LIKE ? OR c.ticket_id LIKE ? OR c.labels_csv LIKE ? OR s.issue_json LIKE ?)
@@ -522,17 +531,56 @@ func (s *Store) SearchIssues(ctx context.Context, query string, project string, 
 	list := make([]issue.WorkItem, 0)
 	for rows.Next() {
 		var item issue.WorkItem
-		var stateStr, snapshotJSON, createdByStr, remoteUpdatedAtStr string
-		if err := rows.Scan(&item.ID, &item.Key, &item.ProjectID, &item.Title, &item.StateName, &stateStr, &item.Priority, &item.Assignee, &snapshotJSON, &createdByStr, &remoteUpdatedAtStr); err != nil {
+		var stateStr, assigneesJSON, snapshotJSON, createdByStr, remoteUpdatedAtStr string
+		var completedAtStr, startDateStr, targetDateStr, archivedAtStr, createdAtStr, labelsCSVStr string
+		if err := rows.Scan(&item.ID, &item.Key, &item.ProjectID, &item.Title, &item.StateName, &stateStr, &item.Priority,
+			&assigneesJSON, &snapshotJSON, &createdByStr, &remoteUpdatedAtStr,
+			&completedAtStr, &startDateStr, &targetDateStr, &archivedAtStr,
+			&createdAtStr, &labelsCSVStr); err != nil {
 			return nil, err
 		}
 		item.State = issue.State(stateStr)
 		item.StateGroup = stateStr
 		item.CreatedBy = createdByStr
+		item.StartDate = startDateStr
+		item.TargetDate = targetDateStr
+		item.LabelsCSV = labelsCSVStr
+		if labelsCSVStr != "" {
+			for _, l := range strings.Split(labelsCSVStr, ",") {
+				l = strings.TrimSpace(l)
+				if l != "" {
+					item.Labels = append(item.Labels, l)
+				}
+			}
+		}
 		if remoteUpdatedAtStr != "" {
 			if t, err := time.Parse(time.RFC3339, remoteUpdatedAtStr); err == nil {
 				item.RemoteUpdatedAt = &t
 			}
+		}
+		if completedAtStr != "" {
+			if t, err := time.Parse(time.RFC3339, completedAtStr); err == nil {
+				item.CompletedAt = &t
+			}
+		}
+		if archivedAtStr != "" {
+			if t, err := time.Parse(time.RFC3339, archivedAtStr); err == nil {
+				item.ArchivedAt = &t
+			}
+		}
+		if createdAtStr != "" {
+			if t, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
+				item.CreatedAt = t
+			}
+		}
+		var assignees []string
+		if err := json.Unmarshal([]byte(assigneesJSON), &assignees); err == nil {
+			item.Assignees = assignees
+			if len(assignees) > 0 {
+				item.Assignee = assignees[0]
+			}
+		} else if assigneesJSON != "" && assigneesJSON != "[]" {
+			item.Assignee = assigneesJSON
 		}
 
 		if snapshotJSON != "" {
@@ -716,21 +764,29 @@ func (s *Store) GetState(ctx context.Context, projectID, name string) (*StateRec
 
 // SaveIssue inserta o actualiza una tarea en la caché local.
 func (s *Store) SaveIssue(ctx context.Context, item *issue.WorkItem) error {
-	query := `INSERT INTO issues_cache(id, sequence_id, ticket_id, project_id, title, state_name, state_group, priority, labels_csv, assignees_json, created_by, remote_updated_at, updated_at)
-	          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	          ON CONFLICT(id) DO UPDATE SET
-	            sequence_id=excluded.sequence_id,
-	            ticket_id=excluded.ticket_id,
-	            project_id=excluded.project_id,
-	            title=excluded.title,
-	            state_name=excluded.state_name,
-	            state_group=excluded.state_group,
-	            priority=excluded.priority,
-	            labels_csv=excluded.labels_csv,
-	            assignees_json=excluded.assignees_json,
-	            created_by=COALESCE(NULLIF(excluded.created_by, ''), issues_cache.created_by),
-	            remote_updated_at=CASE WHEN excluded.remote_updated_at != '' THEN excluded.remote_updated_at ELSE issues_cache.remote_updated_at END,
-	            updated_at=excluded.updated_at`
+	query := `INSERT INTO issues_cache(
+		id, sequence_id, ticket_id, project_id, title, state_name, state_group, priority,
+		labels_csv, assignees_json, created_by, created_at, remote_updated_at,
+		completed_at, start_date, target_date, archived_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		sequence_id=excluded.sequence_id,
+		ticket_id=excluded.ticket_id,
+		project_id=excluded.project_id,
+		title=excluded.title,
+		state_name=excluded.state_name,
+		state_group=excluded.state_group,
+		priority=excluded.priority,
+		labels_csv=excluded.labels_csv,
+		assignees_json=excluded.assignees_json,
+		created_by=COALESCE(NULLIF(excluded.created_by, ''), issues_cache.created_by),
+		created_at=CASE WHEN excluded.created_at != '' THEN excluded.created_at ELSE issues_cache.created_at END,
+		remote_updated_at=CASE WHEN excluded.remote_updated_at != '' THEN excluded.remote_updated_at ELSE issues_cache.remote_updated_at END,
+		completed_at=CASE WHEN excluded.completed_at != '' THEN excluded.completed_at ELSE issues_cache.completed_at END,
+		start_date=CASE WHEN excluded.start_date != '' THEN excluded.start_date ELSE issues_cache.start_date END,
+		target_date=CASE WHEN excluded.target_date != '' THEN excluded.target_date ELSE issues_cache.target_date END,
+		archived_at=CASE WHEN excluded.archived_at != '' THEN excluded.archived_at ELSE issues_cache.archived_at END,
+		updated_at=excluded.updated_at`
 
 	nowUnix := float64(time.Now().Unix())
 	stateName := item.StateName
@@ -762,12 +818,35 @@ func (s *Store) SaveIssue(ctx context.Context, item *issue.WorkItem) error {
 		}
 	}
 
+	labelsCSV := item.LabelsCSV
+	if labelsCSV == "" && len(item.Labels) > 0 {
+		labelsCSV = strings.Join(item.Labels, ",")
+	}
+
 	remoteUpdatedAtStr := ""
 	if item.RemoteUpdatedAt != nil {
 		remoteUpdatedAtStr = item.RemoteUpdatedAt.Format(time.RFC3339)
 	}
 
-	_, err := s.db.ExecContext(ctx, query, item.ID, item.SequenceID, item.Key, item.ProjectID, item.Title, stateName, stateGroup, priority, item.LabelsCSV, assigneesJSON, item.CreatedBy, remoteUpdatedAtStr, nowUnix)
+	createdAtStr := ""
+	if !item.CreatedAt.IsZero() {
+		createdAtStr = item.CreatedAt.Format(time.RFC3339)
+	}
+
+	completedAtStr := ""
+	if item.CompletedAt != nil {
+		completedAtStr = item.CompletedAt.Format(time.RFC3339)
+	}
+
+	archivedAtStr := ""
+	if item.ArchivedAt != nil {
+		archivedAtStr = item.ArchivedAt.Format(time.RFC3339)
+	}
+
+	_, err := s.db.ExecContext(ctx, query,
+		item.ID, item.SequenceID, item.Key, item.ProjectID, item.Title, stateName, stateGroup, priority,
+		labelsCSV, assigneesJSON, item.CreatedBy, createdAtStr, remoteUpdatedAtStr,
+		completedAtStr, item.StartDate, item.TargetDate, archivedAtStr, nowUnix)
 	if err != nil {
 		return err
 	}
@@ -1264,23 +1343,54 @@ func (s *Store) MigrateLocalIssue(ctx context.Context, oldID, oldKey string, new
 		remoteUpdatedAtStr = newItem.RemoteUpdatedAt.Format(time.RFC3339)
 	}
 
-	query := `INSERT INTO issues_cache(id, sequence_id, ticket_id, project_id, title, state_name, state_group, priority, labels_csv, assignees_json, created_by, remote_updated_at, updated_at)
-	          VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	          ON CONFLICT(id) DO UPDATE SET
-	            sequence_id=excluded.sequence_id,
-	            ticket_id=excluded.ticket_id,
-	            project_id=excluded.project_id,
-	            title=excluded.title,
-	            state_name=excluded.state_name,
-	            state_group=excluded.state_group,
-	            priority=excluded.priority,
-	            labels_csv=excluded.labels_csv,
-	            assignees_json=excluded.assignees_json,
-	            created_by=COALESCE(NULLIF(excluded.created_by, ''), issues_cache.created_by),
-	            remote_updated_at=CASE WHEN excluded.remote_updated_at != '' THEN excluded.remote_updated_at ELSE issues_cache.remote_updated_at END,
-	            updated_at=excluded.updated_at`
+	createdAtStr := ""
+	if !newItem.CreatedAt.IsZero() {
+		createdAtStr = newItem.CreatedAt.Format(time.RFC3339)
+	}
 
-	if _, err := tx.ExecContext(ctx, query, newItem.ID, newItem.SequenceID, newItem.Key, newItem.ProjectID, newItem.Title, stateName, stateGroup, priority, newItem.LabelsCSV, assigneesJSON, newItem.CreatedBy, remoteUpdatedAtStr, nowUnix); err != nil {
+	completedAtStr := ""
+	if newItem.CompletedAt != nil {
+		completedAtStr = newItem.CompletedAt.Format(time.RFC3339)
+	}
+
+	archivedAtStr := ""
+	if newItem.ArchivedAt != nil {
+		archivedAtStr = newItem.ArchivedAt.Format(time.RFC3339)
+	}
+
+	labelsCSV := newItem.LabelsCSV
+	if labelsCSV == "" && len(newItem.Labels) > 0 {
+		labelsCSV = strings.Join(newItem.Labels, ",")
+	}
+
+	query := `INSERT INTO issues_cache(
+		id, sequence_id, ticket_id, project_id, title, state_name, state_group, priority,
+		labels_csv, assignees_json, created_by, created_at, remote_updated_at,
+		completed_at, start_date, target_date, archived_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		sequence_id=excluded.sequence_id,
+		ticket_id=excluded.ticket_id,
+		project_id=excluded.project_id,
+		title=excluded.title,
+		state_name=excluded.state_name,
+		state_group=excluded.state_group,
+		priority=excluded.priority,
+		labels_csv=excluded.labels_csv,
+		assignees_json=excluded.assignees_json,
+		created_by=COALESCE(NULLIF(excluded.created_by, ''), issues_cache.created_by),
+		created_at=CASE WHEN excluded.created_at != '' THEN excluded.created_at ELSE issues_cache.created_at END,
+		remote_updated_at=CASE WHEN excluded.remote_updated_at != '' THEN excluded.remote_updated_at ELSE issues_cache.remote_updated_at END,
+		completed_at=CASE WHEN excluded.completed_at != '' THEN excluded.completed_at ELSE issues_cache.completed_at END,
+		start_date=CASE WHEN excluded.start_date != '' THEN excluded.start_date ELSE issues_cache.start_date END,
+		target_date=CASE WHEN excluded.target_date != '' THEN excluded.target_date ELSE issues_cache.target_date END,
+		archived_at=CASE WHEN excluded.archived_at != '' THEN excluded.archived_at ELSE issues_cache.archived_at END,
+		updated_at=excluded.updated_at`
+
+	if _, err := tx.ExecContext(ctx, query,
+		newItem.ID, newItem.SequenceID, newItem.Key, newItem.ProjectID, newItem.Title, stateName, stateGroup, priority,
+		labelsCSV, assigneesJSON, newItem.CreatedBy, createdAtStr, remoteUpdatedAtStr,
+		completedAtStr, newItem.StartDate, newItem.TargetDate, archivedAtStr, nowUnix); err != nil {
 		return err
 	}
 

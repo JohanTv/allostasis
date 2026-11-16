@@ -140,6 +140,8 @@ func (s *TrackerService) Create(ctx context.Context, input issue.CreateIssueInpu
 		StateGroup:  stateGroup,
 		State:       issue.State(stateGroup),
 		Priority:    input.Priority,
+		StartDate:   input.StartDate,
+		TargetDate:  input.TargetDate,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -194,6 +196,18 @@ func (s *TrackerService) Update(ctx context.Context, key string, input issue.Upd
 	}
 	if input.Description != nil {
 		item.Description = *input.Description
+	}
+	if input.StartDate != nil {
+		item.StartDate = *input.StartDate
+	}
+	if input.TargetDate != nil {
+		item.TargetDate = *input.TargetDate
+	}
+	if item.State == issue.StateCompleted && item.CompletedAt == nil {
+		now := time.Now()
+		item.CompletedAt = &now
+	} else if item.State != issue.StateCompleted {
+		item.CompletedAt = nil
 	}
 
 	// Guardar cambio local en SQLite

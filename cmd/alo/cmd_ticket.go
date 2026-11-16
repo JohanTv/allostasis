@@ -260,6 +260,29 @@ func newTicketCmd() *cobra.Command {
 			if item.Assignee != "" {
 				fmt.Printf("   • Asignado  : %s\n", item.Assignee)
 			}
+			if item.CreatedBy != "" {
+				fmt.Printf("   • Creador   : %s\n", item.CreatedBy)
+			}
+			if item.StartDate != "" || item.TargetDate != "" {
+				start := item.StartDate
+				if start == "" {
+					start = "—"
+				}
+				target := item.TargetDate
+				if target == "" {
+					target = "—"
+				}
+				fmt.Printf("   • Plan      : %s → %s\n", start, target)
+			}
+			if item.CompletedAt != nil {
+				fmt.Printf("   • Completado: %s\n", item.CompletedAt.Format("2006-01-02 15:04"))
+			}
+			if item.ArchivedAt != nil {
+				fmt.Printf("   • Archivado : %s\n", item.ArchivedAt.Format("2006-01-02 15:04"))
+			}
+			if len(item.Labels) > 0 {
+				fmt.Printf("   • Etiquetas : %s\n", strings.Join(item.Labels, ", "))
+			}
 			if item.Description != "" {
 				fmt.Printf("\n📄 Descripción:\n   %s\n", strings.ReplaceAll(item.Description, "\n", "\n   "))
 			}
@@ -268,6 +291,7 @@ func newTicketCmd() *cobra.Command {
 
 	// 4. ticket create
 	var createProjectFlag, createPriorityFlag, createStateFlag, createDescFlag string
+	var createStartDateFlag, createTargetDateFlag string
 	ticketCreateCmd := &cobra.Command{
 		Use:   "create <título>",
 		Short: "Crea una nueva tarea (en Plane CE o local si está offline)",
@@ -293,6 +317,8 @@ func newTicketCmd() *cobra.Command {
 				Description: createDescFlag,
 				Priority:    createPriorityFlag,
 				StateName:   createStateFlag,
+				StartDate:   createStartDateFlag,
+				TargetDate:  createTargetDateFlag,
 			})
 			if err != nil {
 				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
@@ -313,9 +339,13 @@ func newTicketCmd() *cobra.Command {
 	ticketCreateCmd.Flags().StringVar(&createPriorityFlag, "priority", "medium", "Prioridad (low, medium, high, urgent)")
 	ticketCreateCmd.Flags().StringVar(&createStateFlag, "state", "Pendiente", "Estado inicial")
 	ticketCreateCmd.Flags().StringVar(&createDescFlag, "desc", "", "Descripción de la tarea")
+	ticketCreateCmd.Flags().StringVar(&createStartDateFlag, "start-date", "", "Fecha de inicio planificada (YYYY-MM-DD)")
+	ticketCreateCmd.Flags().StringVar(&createTargetDateFlag, "due-date", "", "Fecha límite / de entrega (YYYY-MM-DD)")
+	ticketCreateCmd.Flags().StringVar(&createTargetDateFlag, "target-date", "", "Alias de --due-date (YYYY-MM-DD)")
 
 	// 5. ticket update
 	var updateStateFlag, updatePriorityFlag, updateTitleFlag string
+	var updateStartDateFlag, updateTargetDateFlag string
 	ticketUpdateCmd := &cobra.Command{
 		Use:   "update <TICKET-ID>",
 		Short: "Actualiza el estado, prioridad o título de una tarea",
@@ -345,6 +375,12 @@ func newTicketCmd() *cobra.Command {
 			if updateTitleFlag != "" {
 				input.Title = &updateTitleFlag
 			}
+			if updateStartDateFlag != "" {
+				input.StartDate = &updateStartDateFlag
+			}
+			if updateTargetDateFlag != "" {
+				input.TargetDate = &updateTargetDateFlag
+			}
 
 			updated, err := svc.Update(ctx, args[0], input)
 			if err != nil {
@@ -365,6 +401,9 @@ func newTicketCmd() *cobra.Command {
 	ticketUpdateCmd.Flags().StringVar(&updateStateFlag, "state", "", "Nuevo estado")
 	ticketUpdateCmd.Flags().StringVar(&updatePriorityFlag, "priority", "", "Nueva prioridad")
 	ticketUpdateCmd.Flags().StringVar(&updateTitleFlag, "title", "", "Nuevo título")
+	ticketUpdateCmd.Flags().StringVar(&updateStartDateFlag, "start-date", "", "Fecha de inicio planificada (YYYY-MM-DD)")
+	ticketUpdateCmd.Flags().StringVar(&updateTargetDateFlag, "due-date", "", "Fecha límite / de entrega (YYYY-MM-DD)")
+	ticketUpdateCmd.Flags().StringVar(&updateTargetDateFlag, "target-date", "", "Alias de --due-date (YYYY-MM-DD)")
 
 	// 6. ticket sync
 	var syncAllProjectsFlag bool

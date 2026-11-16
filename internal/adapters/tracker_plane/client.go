@@ -122,6 +122,46 @@ func parseUserID(v interface{}) string {
 	return ""
 }
 
+// parseISOTime extrae una marca temporal ISO/RFC3339 tolerando formatos variantes de fecha.
+func parseISOTime(v interface{}) *time.Time {
+	if v == nil {
+		return nil
+	}
+	s, ok := v.(string)
+	if !ok || strings.TrimSpace(s) == "" {
+		return nil
+	}
+	s = strings.TrimSpace(s)
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return &t
+		}
+	}
+	return nil
+}
+
+// parseDateStr extrae una fecha YYYY-MM-DD tolerando cadenas con hora u objetos.
+func parseDateStr(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	s = strings.TrimSpace(s)
+	if len(s) >= 10 {
+		return s[:10]
+	}
+	return s
+}
+
 // Whoami valida la conectividad y las credenciales con Plane CE retornando datos del usuario actual.
 func (c *Client) Whoami(ctx context.Context) (*UserInfo, error) {
 	if c.cfg.APIKey == "" {
@@ -494,6 +534,12 @@ func (c *Client) FetchIssues(ctx context.Context, projectID, projectKey string, 
 		}
 		item.CreatedBy = createdBy
 
+		// Extraer ciclo de vida y fechas temporales
+		item.CompletedAt = parseISOTime(it["completed_at"])
+		item.ArchivedAt = parseISOTime(it["archived_at"])
+		item.StartDate = parseDateStr(it["start_date"])
+		item.TargetDate = parseDateStr(it["target_date"])
+
 		// Extraer fechas upstream agnósticas
 		if upStr, ok := it["updated_at"].(string); ok && upStr != "" {
 			if t, err := time.Parse(time.RFC3339, upStr); err == nil {
@@ -602,6 +648,12 @@ func (c *Client) CreateIssueRemote(ctx context.Context, projectID string, input 
 	if input.Description != "" {
 		payloadMap["description_html"] = fmt.Sprintf("<p>%s</p>", input.Description)
 	}
+	if input.StartDate != "" {
+		payloadMap["start_date"] = input.StartDate
+	}
+	if input.TargetDate != "" {
+		payloadMap["target_date"] = input.TargetDate
+	}
 
 	payloadBytes, _ := json.Marshal(payloadMap)
 	url := fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issues/", c.cfg.BaseURL, c.cfg.Workspace, projectID)
@@ -664,6 +716,8 @@ func (c *Client) CreateIssueRemote(ctx context.Context, projectID string, input 
 		Description:     input.Description,
 		StateName:       input.StateName,
 		Priority:        input.Priority,
+		StartDate:       input.StartDate,
+		TargetDate:      input.TargetDate,
 		CreatedBy:       createdBy,
 		RemoteUpdatedAt: remoteUpdatedAt,
 	}, nil
@@ -687,6 +741,12 @@ func (c *Client) UpdateIssueRemote(ctx context.Context, projectID, issueID strin
 	}
 	if input.Description != nil {
 		payloadMap["description_html"] = fmt.Sprintf("<p>%s</p>", *input.Description)
+	}
+	if input.StartDate != nil {
+		payloadMap["start_date"] = *input.StartDate
+	}
+	if input.TargetDate != nil {
+		payloadMap["target_date"] = *input.TargetDate
 	}
 
 	payloadBytes, _ := json.Marshal(payloadMap)
