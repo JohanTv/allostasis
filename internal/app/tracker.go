@@ -256,6 +256,37 @@ func (s *TrackerService) SyncLabels(ctx context.Context, projectID string) (int,
 	return count, nil
 }
 
+// SyncCatalogs descarga y actualiza catálogos (proyectos, estados y etiquetas) sin descargar tareas.
+func (s *TrackerService) SyncCatalogs(ctx context.Context, projectKey string) error {
+	projects, err := s.SyncProjects(ctx)
+	if err != nil {
+		return fmt.Errorf("error sincronizando proyectos: %w", err)
+	}
+
+	targetProjects := projects
+	if projectKey != "" {
+		targetProjects = nil
+		for _, p := range projects {
+			if strings.EqualFold(p.Identifier, projectKey) || strings.EqualFold(p.ProjectID, projectKey) {
+				targetProjects = append(targetProjects, p)
+				break
+			}
+		}
+		if len(targetProjects) == 0 {
+			return fmt.Errorf("proyecto %s no encontrado", projectKey)
+		}
+	}
+
+	for _, p := range targetProjects {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		_, _ = s.SyncStates(ctx, p.ProjectID)
+		_, _ = s.SyncLabels(ctx, p.ProjectID)
+	}
+	return nil
+}
+
 // SyncIssues descarga las tareas de un proyecto y las sincroniza en caché y snapshots.
 func (s *TrackerService) SyncIssues(ctx context.Context, projectKey string, limit int) (int, error) {
 	if s.client == nil {

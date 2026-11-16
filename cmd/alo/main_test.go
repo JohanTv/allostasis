@@ -195,31 +195,44 @@ func TestCLI_StatesJSONContract(t *testing.T) {
 	}
 }
 
-func TestCLI_TicketList_RefreshOfflineExclusion(t *testing.T) {
-	cmd := exec.Command("go", "run", "./cmd/alo", "ticket", "list", "--refresh", "--offline", "--json")
+func TestCLI_TicketSync_CatalogsContract(t *testing.T) {
+	cmd := exec.Command("go", "run", "./cmd/alo", "ticket", "sync", "--catalogs", "--json")
 	cmd.Dir = "../.."
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err == nil {
-		t.Fatalf("se esperaba fallo al combinar --refresh y --offline, pero comando tuvo éxito")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("error ejecutando alo ticket sync --catalogs --json: %v (output: %s)", err, string(out))
 	}
 
 	var envelope struct {
-		OK    bool `json:"ok"`
-		Error struct {
-			Code     string `json:"code"`
-			Category string `json:"category"`
-		} `json:"error"`
+		OK   bool `json:"ok"`
+		Data struct {
+			Status string `json:"status"`
+		} `json:"data"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
-		t.Fatalf("salida de error debe ser JSON válido: %v (raw: %s, stderr: %s)", err, stdout.String(), stderr.String())
+	if err := json.Unmarshal(out, &envelope); err != nil {
+		t.Fatalf("la salida no es un JSON válido: %v (raw: %s)", err, string(out))
 	}
-	if envelope.OK {
-		t.Errorf("se esperaba envelope.OK = false")
+	if !envelope.OK {
+		t.Errorf("se esperaba envelope.OK = true")
 	}
-	if envelope.Error.Code != "MUTUALLY_EXCLUSIVE_FLAGS" {
-		t.Errorf("código de error esperado 'MUTUALLY_EXCLUSIVE_FLAGS', obtenido '%s'", envelope.Error.Code)
+	if envelope.Data.Status != "catalogs_synced" {
+		t.Errorf("status esperado 'catalogs_synced', obtenido '%s'", envelope.Data.Status)
+	}
+}
+
+func TestCLI_TicketList_BriefOutput(t *testing.T) {
+	cmd := exec.Command("go", "run", "./cmd/alo", "ticket", "list", "--brief", "-l", "2")
+	cmd.Dir = "../.."
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("error ejecutando alo ticket list --brief: %v (output: %s)", err, string(out))
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) > 0 && lines[0] != "" {
+		for _, l := range lines {
+			if strings.Contains(l, "────") {
+				t.Errorf("brief output no debe incluir cabeceras de tabla: %s", l)
+			}
+		}
 	}
 }

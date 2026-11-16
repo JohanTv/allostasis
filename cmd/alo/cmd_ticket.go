@@ -22,22 +22,13 @@ func newTicketCmd() *cobra.Command {
 	var ticketLimitFlag int
 	var ticketTextFlag string
 	var ticketAllProjectsFlag, ticketBriefFlag, ticketMineFlag, ticketOpenFlag, ticketCreatedFlag, ticketInvolvedFlag bool
-	var ticketRefreshFlag, ticketOfflineFlag, ticketVerboseFlag bool
+	var ticketVerboseFlag bool
 
 	// 1. ticket list
 	ticketListCmd := &cobra.Command{
 		Use:   "list",
 		Short: "Lista tareas registradas en la base de datos local",
 		Run: func(cmd *cobra.Command, args []string) {
-			if ticketRefreshFlag && ticketOfflineFlag {
-				errors.EmitErrorWithDetail(fmt.Errorf("no puedes combinar --refresh y --offline"), errors.ErrorDetail{
-					Code:        "MUTUALLY_EXCLUSIVE_FLAGS",
-					Category:    errors.CategoryUserInput,
-					Hint:        "--refresh requiere red para sincronizar; --offline garantiza no tocarla",
-					Recoverable: true,
-				}, errors.ExitUsageError, jsonFlag)
-			}
-
 			svc, store, err := initTrackerService()
 			if err != nil {
 				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
@@ -56,10 +47,6 @@ func newTicketCmd() *cobra.Command {
 			targetProject := ticketProjectFlag
 			if ticketAllProjectsFlag {
 				targetProject = ""
-			}
-
-			if ticketRefreshFlag {
-				_, _ = svc.Sync(ctx, targetProject, ticketAllProjectsFlag)
 			}
 
 			if ticketTextFlag != "" {
@@ -174,8 +161,6 @@ func newTicketCmd() *cobra.Command {
 	ticketListCmd.Flags().BoolVar(&ticketCreatedFlag, "created", false, "Solo tareas creadas por ti")
 	ticketListCmd.Flags().BoolVar(&ticketInvolvedFlag, "involved", false, "Tareas asignadas, creadas o con actividad tuya")
 	ticketListCmd.Flags().BoolVar(&ticketOpenFlag, "open", false, "Solo tareas abiertas")
-	ticketListCmd.Flags().BoolVar(&ticketRefreshFlag, "refresh", false, "Forzar sincronización remota antes de listar")
-	ticketListCmd.Flags().BoolVar(&ticketOfflineFlag, "offline", false, "Garantizar no realizar llamadas remotas")
 	ticketListCmd.Flags().BoolVar(&ticketVerboseFlag, "verbose", false, "Incluir notas informativas y cobertura")
 
 	// 2. ticket search
@@ -383,6 +368,7 @@ func newTicketCmd() *cobra.Command {
 
 	// 6. ticket sync
 	var syncAllProjectsFlag bool
+	var syncCatalogsFlag bool
 	ticketSyncCmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Descarga y actualiza proyectos, estados y tareas desde Plane CE",
@@ -399,6 +385,23 @@ func newTicketCmd() *cobra.Command {
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
+			}
+
+			if syncCatalogsFlag {
+				err := svc.SyncCatalogs(ctx, ticketProjectFlag)
+				if err != nil {
+					errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+						Code:     "SYNC_CATALOGS_FAILED",
+						Category: errors.CategoryUpstreamService,
+						Hint:     "Verifica la conectividad con Plane CE",
+					}, errors.ExitGeneralError, jsonFlag)
+				}
+				if jsonFlag {
+					errors.EmitSuccess(map[string]interface{}{"status": "catalogs_synced"}, true)
+					return
+				}
+				fmt.Println("🔄 Catálogos sincronizados: proyectos, estados y etiquetas actualizados en SQLite.")
+				return
 			}
 
 			count, err := svc.Sync(ctx, ticketProjectFlag, syncAllProjectsFlag)
@@ -420,6 +423,7 @@ func newTicketCmd() *cobra.Command {
 	}
 	ticketSyncCmd.Flags().StringVarP(&ticketProjectFlag, "project", "p", "", "Proyecto específico a sincronizar")
 	ticketSyncCmd.Flags().BoolVar(&syncAllProjectsFlag, "all-projects", false, "Sincronizar todos los proyectos")
+	ticketSyncCmd.Flags().BoolVarP(&syncCatalogsFlag, "catalogs", "c", false, "Sincronizar únicamente catálogos (proyectos, estados, etiquetas)")
 
 	// 7. ticket whoami
 	ticketWhoamiCmd := &cobra.Command{
