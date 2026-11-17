@@ -347,8 +347,16 @@ func newTicketCmd() *cobra.Command {
 			if len(item.Labels) > 0 {
 				fmt.Printf("   • Etiquetas : %s\n", strings.Join(item.Labels, ", "))
 			}
-			if item.Description != "" {
-				fmt.Printf("\n📄 Descripción:\n   %s\n", strings.ReplaceAll(item.Description, "\n", "\n   "))
+			desc := item.Description
+			if desc == "" && item.DescriptionHTML != "" {
+				desc = stripHTMLTags(item.DescriptionHTML)
+			}
+			if desc != "" {
+				// Renderizado ergonómico de checkboxes para terminal humana
+				renderedDesc := strings.ReplaceAll(desc, "[ ]", "☐")
+				renderedDesc = strings.ReplaceAll(renderedDesc, "[x]", "☑")
+				renderedDesc = strings.ReplaceAll(renderedDesc, "[X]", "☑")
+				fmt.Printf("\n📄 Descripción:\n   %s\n", strings.ReplaceAll(renderedDesc, "\n", "\n   "))
 			}
 
 			if len(comments) > 0 {
@@ -386,6 +394,10 @@ func newTicketCmd() *cobra.Command {
 					}
 					fmt.Printf("   Total: %.1f hrs (%d min)\n", float64(totalMins)/60.0, totalMins)
 				}
+			}
+
+			if len(comments) == 0 && hist == nil {
+				fmt.Printf("\nℹ Tip: Para ver la historia viva y comentarios, ejecuta: alo ticket get %s --include comments,history\n", item.Key)
 			}
 		},
 	}

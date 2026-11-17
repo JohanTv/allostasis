@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"time"
@@ -381,6 +382,28 @@ func scanWorkItem(scan func(dest ...interface{}) error) (*issue.WorkItem, error)
 	return &item, nil
 }
 
+var (
+	htmlStripRegex = regexp.MustCompile(`<[^>]*>`)
+	htmlMetaRegex  = regexp.MustCompile(`<!--[\s\S]*?-->`)
+)
+
+func cleanHTMLDescription(s string) string {
+	s = htmlMetaRegex.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "<br>", "\n")
+	s = strings.ReplaceAll(s, "<br/>", "\n")
+	s = strings.ReplaceAll(s, "<br />", "\n")
+	s = strings.ReplaceAll(s, "</p>", "\n\n")
+	s = strings.ReplaceAll(s, "</li>", "\n")
+	s = strings.ReplaceAll(s, "<li>", "• ")
+	s = htmlStripRegex.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "&nbsp;", " ")
+	s = strings.ReplaceAll(s, "&amp;", "&")
+	s = strings.ReplaceAll(s, "&lt;", "<")
+	s = strings.ReplaceAll(s, "&gt;", ">")
+	s = strings.ReplaceAll(s, "&quot;", "\"")
+	return strings.TrimSpace(s)
+}
+
 // GetIssue consulta una tarea por su clave (ej. OMNIFY-175) o UUID, extrayendo también su descripción si existe.
 func (s *Store) GetIssue(ctx context.Context, key string) (*issue.WorkItem, error) {
 	key = strings.TrimSpace(strings.ToUpper(key))
@@ -403,6 +426,9 @@ func (s *Store) GetIssue(ctx context.Context, key string) (*issue.WorkItem, erro
 		if err := json.Unmarshal([]byte(snapshotJSON.String), &raw); err == nil {
 			if d, ok := raw["description_html"].(string); ok && d != "" {
 				item.DescriptionHTML = d
+				if item.Description == "" {
+					item.Description = cleanHTMLDescription(d)
+				}
 			}
 			if d, ok := raw["description"].(string); ok && d != "" {
 				item.Description = d
@@ -650,6 +676,9 @@ func (s *Store) SearchIssues(ctx context.Context, query string, project string, 
 			if err := json.Unmarshal([]byte(snapshotJSON), &raw); err == nil {
 				if d, ok := raw["description_html"].(string); ok && d != "" {
 					item.DescriptionHTML = d
+					if item.Description == "" {
+						item.Description = cleanHTMLDescription(d)
+					}
 				}
 				if d, ok := raw["description"].(string); ok && d != "" {
 					item.Description = d

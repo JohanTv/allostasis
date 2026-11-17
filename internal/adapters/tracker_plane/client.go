@@ -9,12 +9,35 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/allostasis/alo/internal/domain/issue"
 )
+
+var (
+	htmlStripRegex = regexp.MustCompile(`<[^>]*>`)
+	htmlMetaRegex  = regexp.MustCompile(`<!--[\s\S]*?-->`)
+)
+
+func cleanHTMLToText(s string) string {
+	s = htmlMetaRegex.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "<br>", "\n")
+	s = strings.ReplaceAll(s, "<br/>", "\n")
+	s = strings.ReplaceAll(s, "<br />", "\n")
+	s = strings.ReplaceAll(s, "</p>", "\n\n")
+	s = strings.ReplaceAll(s, "</li>", "\n")
+	s = strings.ReplaceAll(s, "<li>", "• ")
+	s = htmlStripRegex.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "&nbsp;", " ")
+	s = strings.ReplaceAll(s, "&amp;", "&")
+	s = strings.ReplaceAll(s, "&lt;", "<")
+	s = strings.ReplaceAll(s, "&gt;", ">")
+	s = strings.ReplaceAll(s, "&quot;", "\"")
+	return strings.TrimSpace(s)
+}
 
 // Config almacena las credenciales y URLs de conexión a Plane CE.
 type Config struct {
@@ -541,6 +564,16 @@ func (c *Client) FetchIssuesDelta(ctx context.Context, projectID, projectKey str
 				StateGroup: stateGroup,
 				State:      issue.State(stateGroup),
 				Priority:   priority,
+			}
+
+			if dHTML, ok := it["description_html"].(string); ok && dHTML != "" {
+				item.DescriptionHTML = dHTML
+				item.Description = cleanHTMLToText(dHTML)
+			}
+			if d, ok := it["description"].(string); ok && d != "" {
+				item.Description = d
+			} else if d, ok := it["description_stripped"].(string); ok && d != "" {
+				item.Description = d
 			}
 
 			var assigneeIDs []string
