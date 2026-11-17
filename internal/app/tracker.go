@@ -103,6 +103,19 @@ func (s *TrackerService) Create(ctx context.Context, input issue.CreateIssueInpu
 		}
 	}
 
+	// Fail-Closed Pre-Flight (ADR 0025 & CLI Design Guard):
+	// Si el catálogo local en SQLite contiene proyectos conocidos y la clave solicitada no existe,
+	// abortar inmediatamente en lugar de encolar una mutación huérfana (Poison Pill) en la outbox.
+	if projectID == "" && s.store != nil {
+		if knownProjects, err := s.store.ListProjects(ctx); err == nil && len(knownProjects) > 0 {
+			var validKeys []string
+			for _, p := range knownProjects {
+				validKeys = append(validKeys, p.Identifier)
+			}
+			return nil, fmt.Errorf("proyecto '%s' no encontrado en el catálogo. Opciones disponibles: %s. Ejecuta 'alo projects' para consultar", input.ProjectKey, strings.Join(validKeys, ", "))
+		}
+	}
+
 	// 2. Resolver stateID si se indicó StateName
 	var stateID, stateGroup string
 	if input.StateName != "" && projectID != "" {
@@ -1563,4 +1576,12 @@ func (s *TrackerService) ListOutbox(ctx context.Context, includeAll bool) ([]iss
 // DropOutbox elimina un registro de la cola outbox.
 func (s *TrackerService) DropOutbox(ctx context.Context, id int64) error {
 	return s.store.DropOutboxItem(ctx, id)
+}
+
+// ListDeadLetterOutbox lista las mutaciones encoladas que alcanzaron el límite de reintentos (DLQ).
+func (s *TrackerService) ListDeadLetterOutbox(ctx context.Context) ([]issue.OutboxRecord, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("almacenamiento no inicializado")
+	}
+	return s.store.ListDeadLetterOutbox(ctx)
 }

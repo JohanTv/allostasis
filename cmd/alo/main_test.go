@@ -12,6 +12,20 @@ import (
 	"github.com/allostasis/alo/internal/domain/issue"
 )
 
+func TestMain(m *testing.M) {
+	tmpDir, err := os.MkdirTemp("", "alo-cli-hermetic-*")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	isolatedDB := filepath.Join(tmpDir, "isolated_test.db")
+	_ = os.Setenv("ALLOSTASIS_DB_PATH", isolatedDB)
+	_ = os.Setenv("PLANE_DB_PATH", isolatedDB)
+
+	os.Exit(m.Run())
+}
+
 func TestCLI_VersionJSONContract(t *testing.T) {
 	cmd := exec.Command("go", "run", "./cmd/alo", "version", "--json")
 	cmd.Dir = "../.."

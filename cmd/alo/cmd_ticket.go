@@ -1402,7 +1402,55 @@ func newTicketCmd() *cobra.Command {
 		},
 	}
 
-	ticketOutboxCmd.AddCommand(outboxListCmd, outboxDropCmd)
+	outboxDLQCmd := &cobra.Command{
+		Use:   "dlq",
+		Short: "Lista las mutaciones aisladas en Dead Letter Queue (DLQ) tras 5 intentos fallidos",
+		Run: func(cmd *cobra.Command, args []string) {
+			svc, store, err := initTrackerService()
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "INIT_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			defer store.Close()
+
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+
+			items, err := svc.ListDeadLetterOutbox(ctx)
+			if err != nil {
+				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
+					Code:     "DLQ_LIST_FAILED",
+					Category: errors.CategoryInternal,
+				}, errors.ExitGeneralError, jsonFlag)
+			}
+			if items == nil {
+				items = []issue.OutboxRecord{}
+			}
+
+			if jsonFlag {
+				errors.EmitSuccess(items, true)
+				return
+			}
+
+			if len(items) == 0 {
+				fmt.Println("✓ La Dead Letter Queue (DLQ) está vacía: cero mutaciones envenenadas.")
+				return
+			}
+
+			fmt.Printf("☠️ %d Mutaciones Aisladas en Dead Letter Queue (DLQ):\n", len(items))
+			fmt.Printf("%-6s %-12s %-10s %-10s %-10s %s\n", "ID", "TICKET", "TIPO", "ESTADO", "INTENTOS", "ÚLTIMO ERROR")
+			fmt.Println(strings.Repeat("─", 80))
+			for _, it := range items {
+				fmt.Printf("%-6d %-12s %-10s %-10s %-10d %s\n", it.ID, it.TicketRef, it.MutationType, it.State, it.Attempts, it.LastError)
+			}
+		},
+	}
+
+	ticketOutboxCmd.AddCommand(outboxListCmd, outboxDropCmd, outboxDLQCmd)
 
 	ticketCmd.AddCommand(ticketListCmd, ticketSearchCmd, ticketGetCmd, ticketCreateCmd, ticketUpdateCmd, ticketSyncCmd, ticketWhoamiCmd, ticketLabelsCmd, ticketDeleteCmd, ticketLinkCmd, ticketFocusCmd, ticketProjectsCmd, ticketStatesCmd, ticketCommentCmd, ticketOutboxCmd)
 

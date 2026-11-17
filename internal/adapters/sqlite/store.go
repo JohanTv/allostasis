@@ -1349,8 +1349,32 @@ func (s *Store) ListOutbox(ctx context.Context, includeAll bool) ([]issue.Outbox
 		         FROM outbox ORDER BY id ASC`
 	} else {
 		query = `SELECT id, COALESCE(client_id, ''), ticket_ref, payload_json, COALESCE(mutation_type, ''), state, attempts, COALESCE(last_error, ''), COALESCE(target_workspace, ''), COALESCE(plane_comment_id, ''), COALESCE(sent_at, ''), created_at
-		         FROM outbox WHERE state IN ('pending', 'failed') ORDER BY id ASC`
+		         FROM outbox WHERE state IN ('pending', 'failed') AND attempts < 5 ORDER BY id ASC`
 	}
+
+	rows, err := s.reader.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := make([]issue.OutboxRecord, 0)
+	for rows.Next() {
+		var r issue.OutboxRecord
+		var cr string
+		if err := rows.Scan(&r.ID, &r.ClientID, &r.TicketRef, &r.PayloadJSON, &r.MutationType, &r.State, &r.Attempts, &r.LastError, &r.TargetWorkspace, &r.PlaneCommentID, &r.SentAt, &cr); err != nil {
+			continue
+		}
+		r.CreatedAt, _ = time.Parse(time.RFC3339, cr)
+		list = append(list, r)
+	}
+	return list, nil
+}
+
+// ListDeadLetterOutbox lista los registros que alcanzaron el límite de 5 intentos fallidos y fueron aislados en DLQ.
+func (s *Store) ListDeadLetterOutbox(ctx context.Context) ([]issue.OutboxRecord, error) {
+	query := `SELECT id, COALESCE(client_id, ''), ticket_ref, payload_json, COALESCE(mutation_type, ''), state, attempts, COALESCE(last_error, ''), COALESCE(target_workspace, ''), COALESCE(plane_comment_id, ''), COALESCE(sent_at, ''), created_at
+	         FROM outbox WHERE state = 'dead_letter' OR attempts >= 5 ORDER BY id ASC`
 
 	rows, err := s.reader.QueryContext(ctx, query)
 	if err != nil {
@@ -1388,8 +1412,13 @@ func (s *Store) UpdateOutboxSent(ctx context.Context, id int64, planeCommentID s
 }
 
 // UpdateOutboxFailed marca un registro outbox como fallido registrando el error correspondiente.
+// Si los intentos acumulados alcanzan 5, transiciona automáticamente a 'dead_letter' para evitar Head-Of-Line Blocking.
 func (s *Store) UpdateOutboxFailed(ctx context.Context, id int64, errMsg string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE outbox SET state = 'failed', last_error = ?, attempts = attempts + 1 WHERE id = ?`, errMsg, id)
+	_, err := s.db.ExecContext(ctx, `UPDATE outbox 
+		SET state = CASE WHEN attempts + 1 >= 5 THEN 'dead_letter' ELSE 'failed' END,
+		    last_error = ?, 
+		    attempts = attempts + 1 
+		WHERE id = ?`, errMsg, id)
 	return err
 }
 

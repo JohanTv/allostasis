@@ -11,6 +11,7 @@ import (
 	"github.com/allostasis/alo/internal/adapters/sqlite"
 	"github.com/allostasis/alo/internal/adapters/tracker_plane"
 	"github.com/allostasis/alo/internal/app"
+	"github.com/allostasis/alo/internal/config"
 	"github.com/allostasis/alo/internal/domain/clock"
 	"github.com/allostasis/alo/internal/domain/issue"
 	"github.com/allostasis/alo/internal/presentation/errors"
@@ -27,11 +28,10 @@ var (
 )
 
 func initCockpitService() (*app.CockpitService, *sqlite.Store, *gitcli.GitExecutor, error) {
-	if dbPath == "" {
-		dbPath = app.DefaultDatabasePath()
-	}
+	resolvedDB := config.ResolveDatabasePath(dbPath)
+	config.ValidateTestSafety(resolvedDB)
 
-	store, err := sqlite.NewStore(dbPath)
+	store, err := sqlite.NewStore(resolvedDB)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("error al inicializar base de datos: %w", err)
 	}
@@ -45,11 +45,10 @@ func initCockpitService() (*app.CockpitService, *sqlite.Store, *gitcli.GitExecut
 }
 
 func initTrackerService() (*app.TrackerService, *sqlite.Store, error) {
-	if dbPath == "" {
-		dbPath = app.DefaultDatabasePath()
-	}
+	resolvedDB := config.ResolveDatabasePath(dbPath)
+	config.ValidateTestSafety(resolvedDB)
 
-	store, err := sqlite.NewStore(dbPath)
+	store, err := sqlite.NewStore(resolvedDB)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error al inicializar base de datos: %w", err)
 	}
@@ -65,11 +64,10 @@ func initTrackerService() (*app.TrackerService, *sqlite.Store, error) {
 }
 
 func initWorkspaceService() (*app.WorkspaceService, *sqlite.Store, error) {
-	if dbPath == "" {
-		dbPath = app.DefaultDatabasePath()
-	}
+	resolvedDB := config.ResolveDatabasePath(dbPath)
+	config.ValidateTestSafety(resolvedDB)
 
-	store, err := sqlite.NewStore(dbPath)
+	store, err := sqlite.NewStore(resolvedDB)
 	if err != nil {
 		return nil, nil, fmt.Errorf("error al inicializar base de datos: %w", err)
 	}

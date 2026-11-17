@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,35 +12,6 @@ import (
 	"github.com/allostasis/alo/internal/domain/ledger"
 	"github.com/allostasis/alo/internal/domain/workspace"
 )
-
-// DefaultDatabasePath determina la ubicación de la base SQLite (compatible con Plane cache).
-func DefaultDatabasePath() string {
-	if envPath := os.Getenv("ALLOSTASIS_DB_PATH"); envPath != "" {
-		return envPath
-	}
-	if envPath := os.Getenv("PLANE_DB_PATH"); envPath != "" {
-		return envPath
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "allostasis.db"
-	}
-
-	planeDB := filepath.Join(home, ".cache", "plane", "worklogs.db")
-	if _, err := os.Stat(planeDB); err == nil {
-		return planeDB
-	}
-
-	aloDir := filepath.Join(home, ".cache", "allostasis")
-	_ = os.MkdirAll(aloDir, 0700)
-	_ = os.Chmod(aloDir, 0700)
-	aloDB := filepath.Join(aloDir, "allostasis.db")
-	if fi, err := os.Stat(aloDB); err == nil && fi.Mode().Perm() != 0600 {
-		_ = os.Chmod(aloDB, 0600)
-	}
-	return aloDB
-}
 
 // CockpitSnapshot captura el estado holístico del desarrollador para CLI y TUI.
 type CockpitSnapshot struct {

@@ -50,6 +50,7 @@ type IssueStore interface {
 	EnqueueOutbox(ctx context.Context, clientID, ticketRef, payloadJSON, targetWS string) error
 	EnqueueOutboxWithMutation(ctx context.Context, clientID, ticketRef, payloadJSON, targetWS, mutationType string) error
 	ListOutbox(ctx context.Context, includeAll bool) ([]issue.OutboxRecord, error)
+	ListDeadLetterOutbox(ctx context.Context) ([]issue.OutboxRecord, error)
 	DropOutboxItem(ctx context.Context, id int64) error
 	UpdateOutboxSent(ctx context.Context, id int64, planeCommentID string) error
 	UpdateOutboxFailed(ctx context.Context, id int64, errMsg string) error
