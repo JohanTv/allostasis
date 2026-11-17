@@ -35,6 +35,7 @@ Para evitar la creación de micro-tickets basura que destruyan las métricas del
   * *Registro:* `alo log OPS-XX <DURACION_MINUTOS> "Detalle del soporte" --bucket toil_support`.
 * **Tareas > 15 minutos (Trabajo Estructurado):**  
   * *Acción:* Crear ticket formal en Plane **al minuto 15**.
+  * *Regla de Transición:* Si una tarea en OPS se complica y supera los 15 min, se detiene la acción en OPS, se crea el ticket formal en `OMNIFY` y se registra la totalidad del tiempo acumulado (desde el minuto 0) en el nuevo ticket con `--bucket deep_work` (queda prohibido fraccionar el tiempo).
   * *Destino:* Proyecto respectivo (`OMNIFY` por defecto, o `OPS`).
   * *Estado Inicial:* Nace bajo la **Plantilla de Incertidumbre (Fase 1)**.
 
@@ -128,9 +129,14 @@ Toda descripción de ticket en Plane CE (creada vía `alo ticket create --desc "
 **Criterios de Aceptación Técnicos (DoD):**
 - [ ] Menú flotante no se corta en bordes de acordeón.
 - [ ] Selector muestra 2 líneas por ítem y botón de inspección Eye.
-- [ ] Entorno de trabajo multi-repo configurado vía `alo ws create`.
 - [ ] Pruebas unitarias y validación `npm run check` / `go test -race` pasando sin errores.
+- [ ] Pruebas transaccionales / de integración pasando sin regresiones.
 ```
+
+> [!NOTE]
+> **Regla de Bifurcación de Spikes vs Bugs:**  
+> - En un `[FIX]`, la mutación in-place (actualizar causa y solución en el mismo ticket) es válida.  
+> - Un `[SPIKE]` o `[RFC]` **NUNCA DEBE MUTAR a `[FEAT]`**; debe cerrarse como `Completado` con su Veredicto Técnico/Decisión de Diseño, y dar origen a tickets hijos independientes `[FEAT]` para proteger las métricas de Lead Time y la trazabilidad de las hipótesis descartadas.
 
 ---
 
@@ -148,11 +154,15 @@ Toda descripción de ticket en Plane CE (creada vía `alo ticket create --desc "
 
 **Entregables Verificables:**
 - Archivo modificado: `src/components/campaigns/CampaignChipFloatingMenu.vue`
-- Pull Request: PR #278 (esperando revisión técnica)
+- Pull Request: PR #278 (mergeado en origin/dev)
 ```
 
 Al marcar la Fase 3, se actualiza el estado y se registra la telemetría final:
 ```bash
+# Durante espera de code review:
+alo ticket update OMNIFY-263 --state "Revisión"
+
+# Tras merge y verificación final:
 alo log OMNIFY-263 95 "Cierre: migración a Popover con portal y validación en navegadores" --bucket deep_work
 alo ticket update OMNIFY-263 --state "Completado"
 ```
