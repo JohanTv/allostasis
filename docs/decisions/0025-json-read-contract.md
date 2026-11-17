@@ -1,12 +1,12 @@
 ---
 id: "0025"
-title: Stable read envelope contract plane-tracker/1
+title: Stable read envelope contract allostasis/1
 status: accepted
 created: 2026-11-02
 summary: Specification of the standard read envelope, family fields, error codes, and coverage metadata for all CLI read views.
 ---
 
-# 0025 · Stable Read Envelope Contract `plane-tracker/1`
+# 0025 · Stable Read Envelope Contract `allostasis/1`
 
 Promoted from RFC 0021 as the stable interface contract. Represents the machine-readable specification that any AI agent or external consumer can depend on across `--json` invocations.
 
@@ -14,7 +14,7 @@ Promoted from RFC 0021 as the stable interface contract. Represents the machine-
 
 ```json
 {
-  "schema": "plane-tracker/1",
+  "schema": "allostasis/1",
   "view": "list",
   "scope": {"projects": ["PRJ"], "ticket_person": {"relation": "assigned", "actor": "<uuid>"}, "state": "open", "text": "form", "order": "rank,-sequence", "limit": 20},
   "total": 3,
@@ -28,7 +28,7 @@ Promoted from RFC 0021 as the stable interface contract. Represents the machine-
 
 | Key | Type | Description |
 | :--- | :--- | :--- |
-| `schema` | string | `plane-tracker/<n>`; breaking changes increment `<n>` via an ADR. |
+| `schema` | string | `allostasis/<n>` (backward compatible with `plane-tracker/1`); breaking changes increment `<n>` via an ADR. |
 | `view` | string | One of the registered views (`list`, `get`, `report time`, `report flow`, `worklog check`, `labels`, `projects`, `whoami`, `attachment list`, `outbox list`). |
 | `scope` | object | Resolved filter scope applicable to the current view. |
 | `total` | int | Total matching records before pagination limit. |

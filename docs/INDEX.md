@@ -15,7 +15,7 @@
 | **0015** | [Central clock module in production and frozen clock in test harnesses](decisions/0015-central-frozen-clock.md) | accepted | All time reads pass through a single clock module, and golden tests freeze time via a dedicated launcher without runtime environment flags. |
 | **0018** | [Safeguards against accidental worklog destruction during ticket deletion](decisions/0018-destructive-deletion-safeguard.md) | accepted | The delete command fails closed, reads live remote comments alongside local cache, and strictly rejects deletion if foreign worklogs exist. |
 | **0019** | [Person filters in list and verified assignment history](decisions/0019-person-filters-and-assignment-history.md) | accepted | Supported --mine, --created, and --involved filters over SQLite cache, tracking assignment events durable across cache refreshes. |
-| **0025** | [Stable read envelope contract plane-tracker/1](decisions/0025-json-read-contract.md) | accepted | Specification of the standard read envelope, family fields, error codes, and coverage metadata for all CLI read views. |
+| **0025** | [Stable read envelope contract allostasis/1](decisions/0025-json-read-contract.md) | accepted | Specification of the standard read envelope, family fields, error codes, and coverage metadata for all CLI read views. |
 | **0028** | [CQS separation and timestamp-based delta sync watermarks](decisions/0028-cqs-delta-sync-watermarks.md) | accepted | Architectural decision enforcing strict CQS (read views are 100% offline-first queries) and delta sync using ISO timestamps and SQLite sync_watermarks. |
 
 ---

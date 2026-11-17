@@ -18,10 +18,10 @@ Previous iterations coupled read operations (`list`) with network synchronizatio
 
 1. **Strict Command-Query Separation (CQS):**
    - Read commands (`list`, `get`, `report time --offline`) execute purely against the local SQLite store without network side-effects.
-   - Synchronization is the exclusive responsibility of `plane-tracker sync <target>`.
+   - Synchronization is the exclusive responsibility of `alo sync <target>`.
 2. **Granular Sync Targets:**
    - Supported targets: `tickets`, `hours`, `catalogs`, and `all`.
-   - `plane-tracker sync tickets [-p PRJ]` performs a fast delta synchronization (~1s) instead of fetching historical worklogs.
+   - `alo sync tickets [-p PRJ]` performs a fast delta synchronization (~1s) instead of fetching historical worklogs.
 3. **Timestamp Watermarks (`sync_watermarks`):**
    - Stores `last_synced_at` ISO timestamps per entity/project in SQLite.
    - Queries Plane API using `order_by=-updated_at` and halts pagination upon encountering issues older than the stored watermark.
