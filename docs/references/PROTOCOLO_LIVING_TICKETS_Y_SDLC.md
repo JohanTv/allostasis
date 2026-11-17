@@ -2,11 +2,11 @@
 ## Guía de Gestión Evolutiva de Tareas en Incertidumbre para Plane CE v1.2.3
 
 **Ámbito:** Repositorios de trabajo (`Omnify`, `Operaciones`, servicios satélite)  
-**Propósito:** Eliminar la falsa certeza y el sub-registro de horas permitiendo que los tickets nazcan con información parcial de diagnóstico y maduren hasta su cierre verificado.
+**Propósito:** Eliminar la falsa certeza y el sub-registro de horas permitiendo que los tickets nazcan con información parcial de diagnóstico y maduren hasta su cierre verificado bajo el estándar de **Pirámide Invertida** y **Declaración Explícita de Evidencias**.
 
 ---
 
-## 1. El Ciclo de 4 Fases (SDLC propio)
+## 1. El Ciclo de 4 Fases (SDLC Canónico)
 
 Todo requerimiento técnico en la organización se clasifica en una de las 4 fases:
 
@@ -28,11 +28,11 @@ Todo requerimiento técnico en la organización se clasifica en una de las 4 fas
 
 Para evitar la creación de micro-tickets basura que destruyan las métricas del sprint y saturen el tablero Kanban:
 
-* **Tareas < 15 minutos (Toil / Soporte Rápido):**  
+* **Tareas < 15 minutos (Toil / Soporte Rápido / Dailies):**  
   * *Acción:* **NO crear ticket en Omnify**.
   * *Destino:* Absorber en el ticket paraguas semanal de `OPS`:
-    `Tareas Rápidas y Soporte - W{XX}`.
-  * *Registro:* `plane-tracker comment add OPS-XX --track "soporte" --capacity "toil_support" --duration 10 -m "..."`.
+    `Soporte y Mantenimiento Ad-Hoc - W{XX}` o `Sincronización de Equipo y Acuerdos - W{XX}`.
+  * *Registro:* `alo log OPS-XX <DURACION_MINUTOS> "Detalle del soporte" --bucket toil_support`.
 * **Tareas > 15 minutos (Trabajo Estructurado):**  
   * *Acción:* Crear ticket formal en Plane **al minuto 15**.
   * *Destino:* Proyecto respectivo (`OMNIFY` por defecto, o `OPS`).
@@ -40,60 +40,95 @@ Para evitar la creación de micro-tickets basura que destruyan las métricas del
 
 ---
 
-## 3. Las Tres Fases del Living Ticket Pattern
+## 3. Arquitectura del Living Ticket: El Principio de la Pirámide Invertida
 
-```mermaid
-stateDiagram-v2
-    [*] --> Fase1_Incertidumbre: Tarea > 15 min
-    Fase1_Incertidumbre --> Fase2_Solucion: Causa Raíz aislada
-    Fase2_Solucion --> Fase3_Cierre: Código y QA verificados
-    Fase3_Cierre --> [*]: Completado
+Toda descripción de ticket en Plane CE (creada vía `alo ticket create --desc "..."` o interfaz web) debe estructurarse bajo la **Pirámide Invertida** (≤ 250 palabras). La información crítica debe concentrarse al inicio para permitir que cualquier desarrollador o agente entre en contexto en los primeros segundos mediante `alo ticket get`.
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│               ANATOMÍA DE LA PIRÁMIDE INVERTIDA EN PLANE              │
+├────────────────────────────────────────────────────────────────────────┤
+│ 1. TÍTULO SDLC     │ [{FASE}] {Acción concisa en español}              │
+│                    │ ej. [FIX] Corrección de menú flotante de chips... │
+├────────────────────┼───────────────────────────────────────────────────┤
+│ 2. RESUMEN LEAD    │ 1 sola oración que resume la intención completa.  │
+│    (Nivel 0)       │ Suficiente para previews y listados rápidos.      │
+├────────────────────┼───────────────────────────────────────────────────┤
+│ 3. CONTEXTO/CAUSA  │ Viñetas con IDENTIFICADORES TÉCNICOS REALES:      │
+│    (Nivel 1)       │ • Componentes exactos: CampaignChipFloatingMenu   │
+│                    │ • Defectos estructurales: overflow-hidden, portal │
+│                    │ • Referencias Git/API: PR #265 en dev, endpoints  │
+├────────────────────┼───────────────────────────────────────────────────┤
+│ 4. SOLUCIÓN        │ Viñetas accionables de diseño/ingeniería:         │
+│    (Nivel 2)       │ • Primitivas: DropdownMenu/Popover con portal     │
+│                    │ • Archivo destino: api_sms_campaign_manual.md    │
+├────────────────────┼───────────────────────────────────────────────────┤
+│ 5. EVIDENCIAS /    │ DECLARACIÓN OBLIGATORIA DE RECURSOS:              │
+│    ADJUNTOS        │ • Capturas: screenshots/2026-11-16_19-41-06.png    │
+│                    │ • Figma / Sentry / Logs: URLs o Comentario #1     │
+├────────────────────┼───────────────────────────────────────────────────┤
+│ 6. CRITERIOS DoD   │ Checkboxes binarios [ ] verificables por QA/tests.│
+└────────────────────┴───────────────────────────────────────────────────┘
 ```
 
-### FASE 1: Estado Inicial (Triage & Incertidumbre)
-**Cuándo se usa:** Al crear un bug, incidente o spike donde aún no se conoce la causa raíz ni la solución. Aplica estrictamente la **Pirámide Invertida (≤200 palabras)**:
+> [!IMPORTANT]
+> **Declaración Obligatoria de Evidencias y Adjuntos:**  
+> Si un ticket tiene capturas de pantalla, grabaciones, diseños de Figma o trazas de Sentry, **DEBEN listarse explícitamente en la descripción**. Los agentes autónomos operan en entornos headless/CLI y no pueden "adivinar" si existen archivos visuales si no están declarados en el texto.
+
+---
+
+## 4. Plantillas Canónicas por Fase
+
+### FASE 1: Estado Inicial (Triage & Incertidumbre — [SPIKE] o Bug No Aislado)
+**Cuándo se usa:** Al iniciar un incidente o spike donde aún no se conoce la causa raíz exacta.
 
 ```markdown
-**Resumen:** [Qué falla exactamente y qué anomalía se investiga].
+**Resumen:** [Qué falla exactamente y bajo qué condiciones de frontera].
 
 **Contexto & Síntoma:**
-- Módulo: `nombre_modulo` (ej. Webhook Detonador SMS)
-- Anomalía: [1 párrafo conciso con códigos o discrepancias clave].
+- Módulo / Componente: `nombre_modulo` (ej. Webhook Detonador SMS)
+- Anomalía: [1 párrafo conciso con códigos HTTP, latencias o discrepancias clave].
+
+**Evidencias & Adjuntos:**
+- Captura UI: `screenshots/2026-11-16_19-41-06.png` (o URL en Plane)
+- Logs / Payload: Ver comentario [1] (toda traza extensa va en comentario, nunca en la descripción)
 
 **Hipótesis Preliminares:**
 - [ ] Hipótesis A: [Posible causa 1]
 - [ ] Hipótesis B: [Posible causa 2]
 
 **Plan de Investigación (Spike Checklist):**
-- [ ] Reproducir con payload idéntico en réplica de BD.
+- [ ] Reproducir con payload idéntico en réplica de BD o test de integración.
 - [ ] Aislar la condición de carrera o línea exacta en logs.
-
-*Evidencia forense, queries y datos de muestra: ver comentario [1] o adjunto.*
 ```
-*(Toda traza extensa, snippet de código o query SQL se publica de inmediato como primer comentario con `plane-tracker comment add`, nunca dentro de la descripción).*
+
+*(Toda traza extensa, snippet de código o volcado SQL se publica de inmediato como primer comentario con `alo ticket comment add <TICKET> "<TRAZA>"`, nunca dentro de la descripción).*
 
 ---
 
-### FASE 2: Estado Intermedio (Causa Raíz Aislada ➔ Diseño y Solución)
-**Cuándo se usa:** En cuanto se identifica el origen exacto del problema. Se actualiza la descripción en Plane mediante `plane-tracker update <TICKET> -d "..."`:
+### FASE 2: Estado Intermedio (Causa Raíz Aislada ➔ Diseño y Solución — [RFC] o [FEAT/FIX])
+**Cuándo se usa:** En cuanto se identifica el origen exacto del problema. Se actualiza la descripción en Plane mediante `alo ticket update <TICKET> --desc "..."`:
 
 ```markdown
 **Resumen:** [Qué falla y qué se implementará para resolverlo].
 
 **Contexto & Causa Raíz:**
-[1 párrafo conciso explicando el fallo estructural aislado; referenciar ticket origen si aplica sin duplicar texto].
+- Componente afectado: `CampaignChipFloatingMenu` (overflow-hidden en acordeón)
+- Referencia upstream: PR #265 en origin/dev
+
+**Evidencias & Adjuntos:**
+- Captura UI verificada: `screenshots/2026-11-16_19-41-06.png`
+- Especificación API / Swagger: `docs/api_sms_campaign_manual.md`
 
 **Solución Propuesta:**
-1. [Enfoque técnico 1: patrón, middleware o índice]
-2. [Enfoque técnico 2: clave de idempotencia o mitigación]
+1. [Primitiva o refactor]: Migrar menú a DropdownMenu/Popover con portal al body y colisiones.
+2. [Ajuste de contrato]: Actualizar selector con line-clamp-2 y botón de inspección Eye.
 
 **Criterios de Aceptación Técnicos (DoD):**
-- [ ] Parche defensivo implementado en controlador o servicio.
-- [ ] Migración o query ejecutada exitosamente con rollback seguro.
-- [ ] Rama Git bajo patrón `{tipo}/{TICKET-ID}-{kebab}`.
-- [ ] Pruebas unitarias / de integración pasando sin regresión.
-
-*Detalle forense y análisis previo: ver comentarios o tickets enlazados.*
+- [ ] Menú flotante no se corta en bordes de acordeón.
+- [ ] Selector muestra 2 líneas por ítem y botón de inspección Eye.
+- [ ] Entorno de trabajo multi-repo configurado vía `alo ws create`.
+- [ ] Pruebas unitarias y validación `npm run check` / `go test -race` pasando sin errores.
 ```
 
 ---
@@ -102,22 +137,21 @@ stateDiagram-v2
 **Cuándo se usa:** El código está mergeado, validado en réplica o staging, y listo para dar el ticket por concluido.
 
 ```markdown
-**Resumen:** [Resumen de la solución completada].
+**Resumen:** [Resumen de la solución completada y verificada].
 
 **Criterios de Aceptación Técnicos (DoD):**
-- [x] Parche defensivo implementado en el controlador o servicio respectivo.
-- [x] Migración o query ejecutada exitosamente en entorno controlado con `ROLLBACK` seguro.
-- [x] Rama Git creada bajo el patrón `fix/OMNIFY-180-mitigar-timeout-webhook`.
+- [x] Parche defensivo implementado en el componente/controlador respectivo.
 - [x] Pruebas transaccionales en réplica ejecutadas satisfactoriamente (Dry-Run exitoso).
+- [x] Rama Git creada bajo el patrón `fix/OMNIFY-263-dropdown-portal-fix`.
+- [x] npm run check / tests automáticos pasando al 100%.
 
 **Entregables Verificables:**
-- Archivo modificado: `src/controllers/webhook.controller.ts`
-- Script de validación: `scripts/reconcile_campaign_credits.py`
-- Pull Request: PR #42 (esperando revisión técnica del líder técnico)
+- Archivo modificado: `src/components/campaigns/CampaignChipFloatingMenu.vue`
+- Pull Request: PR #278 (esperando revisión técnica)
 ```
 
-Al marcar la Fase 3, se publica el comentario final con la bitácora corta (formato en `SKILL.md` §4):
+Al marcar la Fase 3, se actualiza el estado y se registra la telemetría final:
 ```bash
-plane-tracker comment add OMNIFY-180 -f /tmp/worklog_cierre.md --duration 95
-plane-tracker update OMNIFY-180 --state "Completado"
+alo log OMNIFY-263 95 "Cierre: migración a Popover con portal y validación en navegadores" --bucket deep_work
+alo ticket update OMNIFY-263 --state "Completado"
 ```

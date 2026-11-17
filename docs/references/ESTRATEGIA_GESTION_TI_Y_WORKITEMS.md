@@ -2,7 +2,7 @@
 ## De "Hombre Orquesta" a Ingeniero de Alto Rendimiento Visible
 
 > **Autor:** el mantenedor del repositorio y asistentes de ingeniería (AI Architecture)  
-> **Ubicación:** `agents/skills/work/plane-tracker/references/ESTRATEGIA_GESTION_TI_Y_WORKITEMS.md`  
+> **Ubicación:** `allostasis/docs/references/ESTRATEGIA_GESTION_TI_Y_WORKITEMS.md`  
 > **Plataforma:** Plane Community Edition v1.2.3 (`mi-workspace`)  
 > **Versión:** 1.0.0 — Octubre 2026  
 
@@ -158,52 +158,26 @@ Dado que Plane CE v1.2.3 no tiene time-tracking granular nativo, los comentarios
 
 ---
 
-## 6. Arquitectura de la Suite `Code/plane-tracker` (Dashboard y CLI)
+## 6. Arquitectura de Allostasis (`alo`) (Cabina y CLI)
 
-La carpeta `Code/plane-tracker` será tu centro de automatización personal para que **nunca más llenes un reporte a mano**:
+La suite `Allostasis` (`alo`) es tu centro de automatización soberano para que **la telemetría se registre de forma transparente y sin fricción**:
 
 ```
-Code/plane-tracker/
-├── plans/
-│   └── ESTRATEGIA_GESTION_TI_Y_WORKITEMS.md   # Este documento maestro
-├── .env                                        # API Key y URLs seguras
-├── package.json                                # Dependencias Node.js ESM
-├── src/
-│   ├── config.ts                               # Cliente Plane API v1.2.3
-│   ├── sync.ts                                 # Descarga tickets y parsea metadata
-│   ├── db.ts                                   # SQLite local (cache offline)
-│   └── report.ts                               # Generador de reportes
-└── bin/
-    ├── plane-sync                              # Comando para sincronizar
-    ├── plane-log                               # Registro rápido por terminal
-    └── plane-report                            # Imprime el formato exacto del Jefe
+allostasis/
+├── cmd/alo/                # CLI Cobra nativo en Go
+├── internal/
+│   ├── app/                # Servicios de aplicación y puertos
+│   ├── domain/             # Dominio puro (Ley de Little, Klee, Ledger)
+│   └── adapters/           # SQLite WAL (Wazero), Git CLI, Plane CE
+└── docs/                   # Especificaciones, RFCs y referencias
 ```
 
-### Formato Exportable Automático para tu Jefe
-Cuando tu jefe o gerencia te pida el resumen, ejecutas en tu terminal:
+### Comandos de Telemetría Automática:
+Cuando necesitas consultar el estado o balance de carga, ejecutas en tu terminal:
 ```bash
-node src/report.js --hoy
-```
-Y la herramienta genera automáticamente el texto exacto que ellos esperan:
-
-```text
-================ REPORTE DE TIEMPOS ================
-Fecha: 2026-10-28
-Desarrollador: <nombre>
-
-[OMNIFY] Auditoría y Reconciliación de Créditos SMS
-- Inicio: 10:00 | Fin: 13:30 (3h 30m)
-- Notas: Análisis forense sobre 1.6M registros; identificación de causa raíz error 3001.
-
-[OMNIFY] Análisis de Implementación y Diseño Transaccional
-- Inicio: 14:30 | Fin: 17:15 (2h 45m)
-- Notas: Especificación técnica y diseño de parche SQL defensivo.
-
-[OPERACIONES] Soporte y Dudas de Usuarios
-- Inicio: 17:30 | Fin: 18:30 (1h 00m)
-- Notas: Atención de incidencias reportadas en campañas de un cliente y verificación de Caddy.
-=====================================================
-Total Dedicado: 7h 15m | Entregables: 4 scripts SQL, 2 informes técnicos
+alo load            # Diagnóstico de carga y ratio de toil vs trabajo profundo
+alo agenda          # Focos activos del día
+alo log <ID> <MIN>  # Registro rápido con bucket de capacidad
 ```
 
 ---
@@ -211,8 +185,8 @@ Total Dedicado: 7h 15m | Entregables: 4 scripts SQL, 2 informes técnicos
 ## 7. Hoja de Ruta de Ejecución
 
 1. **Paso 1 (Inmediato):** Dejar documentada esta estrategia y validada en el repositorio.
-2. **Paso 2 (Desarrollo en `Code/plane-tracker`):**
-   - Configurar cliente API en TypeScript/Node.
-   - Crear el script `report` para que puedas generar reportes con un solo comando.
+2. **Paso 2 (Motor Go Soberano `allostasis`):**
+   - Compilación nativa CGO_ENABLED=0 instalada en `~/.local/bin/alo`.
+   - Modos offline-first con SQLite WAL y cola outbox resiliente.
 3. **Paso 3 (Integración con Asistentes):**
-   - Integrar la skill en `~/.agents/skills/plane-tracker/` para que `agy`, Claude Code y OpenCode conozcan las 4 fases y redacten los comentarios de sesión de forma automática.
+   - Integrar la skill en `~/.agents/skills/alo/` para que `agy`, Claude Code y OpenCode conozcan las 4 fases y registren las bitácoras de sesión de forma automática.

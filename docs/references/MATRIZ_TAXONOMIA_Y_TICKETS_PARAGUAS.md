@@ -90,16 +90,16 @@ Ambos viven en el proyecto **`OPS` (Operaciones)**, no en OMNIFY. El identifier 
    - El desarrollador o el asistente verifica si existe el ticket de la semana (`W{ISO_WEEK}`).
    - Si no existe, se crea con estado `Progreso` y con `--start-date` = lunes y `--due-date` = domingo de la semana ISO (ej. W44/2026: `2026-10-26` → `2026-11-01`).
 2. **Durante la semana (Append-Only):**
-   - Cada interrupción, reunión o imprevisto se comenta en **su** paraguas de `OPS`, con track y duración declarada:
+   - Cada interrupción, reunión o imprevisto se comenta en **su** paraguas de `OPS`, con duración declarada y bucket de capacidad:
      ```bash
-     plane-tracker comment add OPS-44 --track "soporte-ripley" --capacity "toil_support" --duration 12 -m "..."
-     plane-tracker comment add OPS-45 --track "daily-pierre" --capacity "coordination" --duration 25 -m "..."
+     alo log OPS-44 12 "Soporte ad-hoc cliente Ripley" --bucket toil_support
+     alo log OPS-45 25 "Daily y acuerdos de equipo" --bucket coordination
      ```
-   - `--duration` (minutos netos) es obligatorio, salvo que se fije la ventana real `--since HH:MM --until HH:MM` (con `--date YYYY-MM-DD` si el hecho fue otro día): entonces la duración sale del intervalo. Si el hecho ocurrió **fuera de la conversación** del agente, el agente **pregunta** cuánto demoró o a qué hora fue antes de comentar; nunca estima.
+   - La duración (minutos netos) es obligatoria y real. Si el hecho ocurrió **fuera de la conversación** del agente, el agente **pregunta** cuánto demoró antes de registrar; nunca inventa cifras.
 3. **Viernes 06:30 pm (Cierre):**
-   - Se ejecuta el balance con `plane-tracker report time --week`.
+   - Se ejecuta el balance con `alo load` o `alo load --json`.
    - Los dos paraguas se transicionan a `Completado`:
      ```bash
-     plane-tracker update OPS-44 --state "Completado"
-     plane-tracker update OPS-45 --state "Completado"
+     alo ticket update OPS-44 --state "Completado"
+     alo ticket update OPS-45 --state "Completado"
      ```
