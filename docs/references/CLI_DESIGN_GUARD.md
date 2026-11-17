@@ -22,7 +22,7 @@ Un CLI robusto es **ortogonal, predecible, silencioso y respeta la economía de 
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│          LOS 6 PILARES INVARIANTES DE PLANE-TRACKER         │
+│          LOS 6 PILARES INVARIANTES DE ALLOSTASIS (ALO)      │
 ├─────────────────────────────────────────────────────────────┤
 │ 1. Separación Comando-Consulta (CQS)                        │
 │    Lecturas NUNCA mutan estado; escrituras no usurpan vistas│
