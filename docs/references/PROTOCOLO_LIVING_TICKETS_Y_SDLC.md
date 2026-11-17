@@ -59,15 +59,16 @@ Toda descripción de ticket en Plane CE (creada vía `alo ticket create --desc "
 │                    │ • Defectos estructurales: overflow-hidden, portal │
 │                    │ • Referencias Git/API: PR #265 en dev, endpoints  │
 ├────────────────────┼───────────────────────────────────────────────────┤
-│ 4. SOLUCIÓN        │ Viñetas accionables de diseño/ingeniería:         │
-│    (Nivel 2)       │ • Primitivas: DropdownMenu/Popover con portal     │
-│                    │ • Archivo destino: api_sms_campaign_manual.md    │
+│ 4. SOLUCIÓN /      │ • FEAT/FIX: Primitivas (DropdownMenu, portal).    │
+│    OPCIONES        │ • SPIKE: Opciones a evaluar (Opción A vs B vs C). │
+│                    │   NUNCA inventar soluciones prematuras en spikes. │
 ├────────────────────┼───────────────────────────────────────────────────┤
 │ 5. EVIDENCIAS /    │ DECLARACIÓN OBLIGATORIA DE RECURSOS:              │
 │    ADJUNTOS        │ • Capturas: screenshots/2026-11-16_19-41-06.png    │
 │                    │ • Figma / Sentry / Logs: URLs o Comentario #1     │
 ├────────────────────┼───────────────────────────────────────────────────┤
-│ 6. CRITERIOS DoD   │ Checkboxes binarios [ ] verificables por QA/tests.│
+│ 6. CRITERIO DE     │ • FEAT/FIX: DoD binario [ ] con tests y build.    │
+│    CIERRE          │ • SPIKE/RFC: Checklist de investigación/veredicto.│
 └────────────────────┴───────────────────────────────────────────────────┘
 ```
 
