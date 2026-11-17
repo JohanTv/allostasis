@@ -18,7 +18,7 @@ Prior versions conflated reading and mutating state: `list` triggered network fe
 
 1. **Strict Command-Query Separation (CQS):**
    - `list`, `get`, and `report time --offline` are pure queries running against local SQLite (<5ms).
-   - All network mutations are managed strictly via `plane-tracker sync <target>`.
+   - All network mutations are managed strictly via `alo sync <target>`.
 2. **Granular Sync Targets:**
    - `sync tickets [-p PRJ]` (tickets only, fast delta ~1s).
    - `sync hours` (telemetry comments and worklogs).

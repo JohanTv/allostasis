@@ -20,6 +20,6 @@ Prior to this architecture, CLI read operations coupled network access, database
    - **Data Access (`store_*`):** Low-level SQLite operations and cache hydration.
    - **Query Engine (`query_*`):** Scope resolution, filtering, and aggregate calculations.
    - **Renderers (`render_*`):** Terminal output formatting (tabular, colors, markdown).
-   - **Envelope (`envelope`):** Standard `plane-tracker/1` JSON envelope for machine/agent integration.
+   - **Envelope (`envelope`):** Standard `allostasis/1` JSON envelope for machine/agent integration.
 2. **Fitness Functions (F1-F15):** Automated architectural tests in `tests/test_architecture.py` verifying layer boundaries, zero unapproved network calls in offline reads, and contract consistency.
 3. **Migration Completed:** All 9 phases (0 through 8) were implemented and verified with golden test suites.

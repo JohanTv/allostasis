@@ -18,5 +18,5 @@ Developers working across multiple workstations (e.g. office workstation and hom
 
 - **Plane is the Single Remote Authority:** Issue and comment telemetry stored in Plane remains the authoritative upstream record.
 - **Local SQLite Caches are Disposable:** Each machine maintains its local SQLite cache, refreshed via granular delta sync.
-- **Machine Handoff Protocol:** Developers flush pending outbox queues (`plane-tracker outbox flush`) before switching machines and sync on the target machine.
+- **Machine Handoff Protocol:** Developers flush pending outbox queues (`alo sync outbox`) before switching machines and sync on the target machine.
 - **Decision:** Reject introducing a separate remote database, preserving local-first privacy, offline capability, and zero external infrastructure requirements.

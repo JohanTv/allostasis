@@ -12,7 +12,7 @@ Related: [principles.md](../principles.md), Decision [0019](../decisions/0019-pe
 
 ## Context
 
-While `plane-tracker` tracks time and synchronizes issues, engineers often need a unified view answering: "What work is assigned to me, what is overdue, what was deferred, and why?".
+While `alo` tracks time and synchronizes issues, engineers often need a unified view answering: "What work is assigned to me, what is overdue, what was deferred, and why?".
 
 ## Proposal
 

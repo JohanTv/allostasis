@@ -16,6 +16,6 @@ The CLI currently assumes a single corporate Plane environment. Engineers often 
 
 ## Proposal
 
-1. **Profile Isolation:** Support separate profiles with distinct SQLite databases, credentials, and configuration directories (e.g. `~/.config/plane-tracker/profiles/<profile>/`).
+1. **Profile Isolation:** Support separate profiles with distinct SQLite databases, credentials, and configuration directories (e.g. `~/.config/allostasis/profiles/<profile>/`).
 2. **Activity Ledger as Core:** Position the local activity ledger and time analytics as the primary system, treating remote trackers as pluggable sync adapters.
 3. **Pluggable Tracker Adapters:** Define standard interfaces for task resolution and time logging across external providers.

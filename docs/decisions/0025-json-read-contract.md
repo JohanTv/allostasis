@@ -28,7 +28,7 @@ Promoted from RFC 0021 as the stable interface contract. Represents the machine-
 
 | Key | Type | Description |
 | :--- | :--- | :--- |
-| `schema` | string | `allostasis/<n>` (backward compatible with `plane-tracker/1`); breaking changes increment `<n>` via an ADR. |
+| `schema` | string | `allostasis/<n>` ; breaking changes increment `<n>` via an ADR. |
 | `view` | string | One of the registered views (`list`, `get`, `report time`, `report flow`, `worklog check`, `labels`, `projects`, `whoami`, `attachment list`, `outbox list`). |
 | `scope` | object | Resolved filter scope applicable to the current view. |
 | `total` | int | Total matching records before pagination limit. |

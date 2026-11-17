@@ -32,7 +32,7 @@ Evaluating `--stopper` against the [CLI Design Guard](../references/CLI_DESIGN_G
 2. **Telemetry Without Duration:** A text reason does not measure time. Displaying `0h 00m` or requiring manual minutes (`--stopper-duration`) injects synthetic guesses.
 3. **Canonical Primitive:** The CLI already has a native mechanism for blockers:
    ```bash
-   plane-tracker update <TICKET> --state Pausado
+   alo ticket update <TICKET> --state Pausado
    ```
 
 ## Convergence Plan: Unification with Agenda and Flow Metrics
@@ -40,13 +40,13 @@ Evaluating `--stopper` against the [CLI Design Guard](../references/CLI_DESIGN_G
 Rather than forcing blockers into daily worklog comments, the essence is captured across two purpose-built views:
 
 ### 1. Qualitative Blocker Visibility in `agenda` (RFC 0005)
-The personal and team dashboard (`plane-tracker agenda` / [RFC 0005](./0005-personal-agenda-and-backlog.md)) is the natural home for active impediments:
+The personal and team dashboard (`alo agenda` / [RFC 0005](./0005-personal-agenda-and-backlog.md)) is the natural home for active impediments:
 * List tickets currently in state `Pausado`.
 * Display the blockage reason (extracted from the last comment's "Siguiente / bloqueo" bullet or transition note) and elapsed days in standby (`Pausado hace 1.5 d`).
 * Provides leadership and developers with immediate visibility of stalled work without touching worklog telemetry.
 
 ### 2. Quantitative Blocker Telemetry in `report flow`
-Cycle time and lead time analysis (`plane-tracker report flow`) is the natural home for duration metrics:
+Cycle time and lead time analysis (`alo load`) is the natural home for duration metrics:
 * Measure standby duration automatically from state transition audit logs (`In Progress -> Paused` to `Paused -> In Progress`).
 * Zero manual flags or estimated minutes; 100% verified state data.
 

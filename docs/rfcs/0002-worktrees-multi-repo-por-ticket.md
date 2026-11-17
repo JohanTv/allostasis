@@ -8,7 +8,7 @@ summary: Script independiente que crea, por ticket, un worktree en cada repo imp
 
 # 0002 · Gestión de worktrees multi-repo por ticket
 
-- **Área:** superficie nueva `worktree add`; si se implementa como script, `bin/work/plane-worktree`.
+- **Área:** superficie nueva `worktree add`; si se implementa como script, `alo ws`.
 
 ## Contexto
 
@@ -57,8 +57,8 @@ Layout deseado:
 
 ## Ubicación: CLI o script
 
-- **Grupo en el CLI** (`plane-tracker worktree add`): un solo punto de entrada, pero el comando no necesita ningún dato de Plane y hereda el gate de credenciales; solo cabe un verbo por el presupuesto de ayuda; y el alta exige 5 puntos de documentación con tests y goldens.
-- **Script independiente** (`bin/work/plane-worktree`): no habla con Plane, no toca el árbol de comandos, no consume presupuesto de ayuda y se testea aislado.
+- **Grupo en el CLI** (`alo worktree add`): un solo punto de entrada, pero el comando no necesita ningún dato de Plane y hereda el gate de credenciales; solo cabe un verbo por el presupuesto de ayuda; y el alta exige 5 puntos de documentación con tests y goldens.
+- **Script independiente** (`alo ws`): no habla con Plane, no toca el árbol de comandos, no consume presupuesto de ayuda y se testea aislado.
 
 **Decisión:** script independiente. La diferencia no es la lógica (es la misma), es la puerta de entrada y su precio.
 
@@ -66,17 +66,17 @@ Layout deseado:
 
 ```bash
 # Alta y orquestación multi-repo
-plane-worktree add TICKET DESCRIPTION REPO[=SLUG]... \
+alo ws add TICKET DESCRIPTION REPO[=SLUG]... \
   [--type feat] [--base dev] [--dir .worktrees] [--reuse-branch] [--no-fetch]
 
 # Inspección centralizada de worktrees y estado git
-plane-worktree list [--dir .worktrees] [--json]
+alo ws list [--dir .worktrees] [--json]
 
 # Auditoría de salud y podabilidad (Filesystem + Git merge-tree + Plane SQLite)
-plane-worktree audit [TARGET] [--dir .worktrees] [--no-fetch] [--json]
+alo ws audit [TARGET] [--dir .worktrees] [--no-fetch] [--json]
 
 # Poda asistida segura (Dry-run por defecto, --include-stale con respaldo .tar.gz)
-plane-worktree prune [TARGET] [--dir .worktrees] [--execute] [--include-stale] [--backup-dir DIR] [--no-fetch] [--json]
+alo ws prune [TARGET] [--dir .worktrees] [--execute] [--include-stale] [--backup-dir DIR] [--no-fetch] [--json]
 ```
 
 | Elemento | Regla |
@@ -130,7 +130,7 @@ Matriz de comportamiento:
 ## Estado de implementación (Noviembre 2026)
 
 Implementado y validado en producción:
-1. **Script independiente:** `bin/work/plane-worktree` (permisos 0755, Python 3 stdlib pura, sin red ni dependencias de Plane).
+1. **Script independiente:** `alo ws` (permisos 0755, Python 3 stdlib pura, sin red ni dependencias de Plane).
 2. **Arquitectura:** Validación pre-flight atómica en dos fases: Fase 1 valida todos los repos, existencia de ramas remotas, disponibilidad de carpetas, estado de ramas locales y preexistencia de `.worktrees` antes de realizar ninguna mutación en filesystem o git. Fase 2 ejecuta de forma atómica usando rutas absolutas.
-3. **Companion en `plane-tracker`:** `plane-tracker create --branch-slug <slug>` para desacoplar títulos en español de slugs de rama en inglés, con normalización Unicode NFKD en `cmd_tickets_write.py`.
+3. **Companion en `alo`:** `alo create --branch-slug <slug>` para desacoplar títulos en español de slugs de rama en inglés, con normalización Unicode NFKD en `cmd_tickets_write.py`.
 4. **Pruebas:** 17 tests unitarios en `tests/test_worktree.py` usando repositorios remotos bare efímeros en `tempfile`. Integrado en la suite de regresión paralela `tests/run_parallel.py`.
