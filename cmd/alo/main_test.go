@@ -167,6 +167,67 @@ func TestCLI_TicketList_MutuallyExclusiveFlags(t *testing.T) {
 	}
 }
 
+func TestCLI_TicketList_StateFilterFlags(t *testing.T) {
+	// 1. Error de exclusión mutua: --closed y --all
+	cmd := exec.Command("go", "run", "./cmd/alo", "ticket", "list", "--closed", "--all", "--json")
+	cmd.Dir = "../.."
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	err := cmd.Run()
+	if err == nil {
+		t.Fatalf("se esperaba fallo al combinar --closed y --all")
+	}
+	var env struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil || env.Error.Code != "MUTUALLY_EXCLUSIVE_FLAGS" {
+		t.Errorf("error esperado MUTUALLY_EXCLUSIVE_FLAGS, obtenido: %+v", env)
+	}
+
+	// 2. Error de exclusión mutua: --closed y --open
+	cmd = exec.Command("go", "run", "./cmd/alo", "ticket", "list", "--closed", "--open", "--json")
+	cmd.Dir = "../.."
+	stdout.Reset()
+	cmd.Stdout = &stdout
+	err = cmd.Run()
+	if err == nil {
+		t.Fatalf("se esperaba fallo al combinar --closed y --open")
+	}
+
+	// 3. Ejecución exitosa con --all
+	cmd = exec.Command("go", "run", "./cmd/alo", "ticket", "list", "--all", "--limit", "2", "--json")
+	cmd.Dir = "../.."
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("error ejecutando alo ticket list --all --json: %v (out: %s)", err, string(out))
+	}
+	var envAll struct {
+		OK   bool                   `json:"ok"`
+		Data map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &envAll); err != nil || !envAll.OK {
+		t.Fatalf("se esperaba respuesta exitosa con --all: %s", string(out))
+	}
+
+	// 4. Ejecución exitosa con --closed
+	cmd = exec.Command("go", "run", "./cmd/alo", "ticket", "list", "--closed", "--limit", "2", "--json")
+	cmd.Dir = "../.."
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("error ejecutando alo ticket list --closed --json: %v (out: %s)", err, string(out))
+	}
+	var envClosed struct {
+		OK   bool                   `json:"ok"`
+		Data map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &envClosed); err != nil || !envClosed.OK {
+		t.Fatalf("se esperaba respuesta exitosa con --closed: %s", string(out))
+	}
+}
+
 func TestCLI_ProjectsJSONContract(t *testing.T) {
 	cmd := exec.Command("go", "run", "./cmd/alo", "projects", "--json")
 	cmd.Dir = "../.."

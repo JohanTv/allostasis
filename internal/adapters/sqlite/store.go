@@ -522,6 +522,8 @@ func (s *Store) ListIssuesFiltered(ctx context.Context, filter issue.IssueFilter
 	}
 	if filter.OpenOnly {
 		q += ` AND LOWER(TRIM(COALESCE(state_group, ''))) NOT IN ('completed', 'cancelled') AND (archived_at IS NULL OR archived_at = '')`
+	} else if filter.ClosedOnly {
+		q += ` AND LOWER(TRIM(COALESCE(state_group, ''))) IN ('completed', 'cancelled')`
 	}
 	if filter.ArchivedOnly {
 		q += ` AND archived_at != ''`

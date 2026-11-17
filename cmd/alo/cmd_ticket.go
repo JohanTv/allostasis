@@ -43,6 +43,7 @@ func newTicketCmd() *cobra.Command {
 	var ticketLimitFlag int
 	var ticketTextFlag string
 	var ticketAllProjectsFlag, ticketBriefFlag, ticketMineFlag, ticketOpenFlag, ticketCreatedFlag, ticketInvolvedFlag bool
+	var ticketAllStatesFlag, ticketClosedFlag bool
 	var ticketVerboseFlag bool
 
 	// 1. ticket list
@@ -69,6 +70,9 @@ func newTicketCmd() *cobra.Command {
 			if ticketAllProjectsFlag {
 				targetProject = ""
 			}
+
+			openOnly := true // Open by default!
+			closedOnly := false
 
 			if ticketTextFlag != "" {
 				items, err = svc.Search(ctx, ticketTextFlag, targetProject, ticketLimitFlag)
@@ -106,11 +110,47 @@ func newTicketCmd() *cobra.Command {
 					userID = resolvedID
 				}
 
+				stateFilterCount := 0
+				if ticketClosedFlag {
+					stateFilterCount++
+				}
+				if ticketAllStatesFlag {
+					stateFilterCount++
+				}
+				if cmd.Flags().Changed("open") {
+					stateFilterCount++
+				}
+				if stateFilterCount > 1 {
+					errors.EmitErrorWithDetail(fmt.Errorf("solo puedes especificar uno de --open, --closed o --all/--all-states"), errors.ErrorDetail{
+						Code:        "MUTUALLY_EXCLUSIVE_FLAGS",
+						Category:    errors.CategoryUserInput,
+						Hint:        "Usa exactamente un modificador de estado o déjalo vacío para el valor por defecto (abiertas)",
+						Recoverable: true,
+					}, errors.ExitUsageError, jsonFlag)
+				}
+
+				openOnly = true // Open by default!
+				closedOnly = false
+
+				if ticketAllStatesFlag {
+					openOnly = false
+					closedOnly = false
+				} else if ticketClosedFlag {
+					openOnly = false
+					closedOnly = true
+				} else if ticketStateFlag != "" && !cmd.Flags().Changed("open") {
+					// Si el usuario especificó un estado explícito con -s (ej. -s Completado o -s Progreso)
+					// y no forzó --open, la intención explícita prevalece y no se restringe a OpenOnly.
+					openOnly = false
+					closedOnly = false
+				}
+
 				filter := issue.IssueFilter{
 					ProjectKey: targetProject,
 					State:      ticketStateFlag,
 					Limit:      ticketLimitFlag,
-					OpenOnly:   ticketOpenFlag,
+					OpenOnly:   openOnly,
+					ClosedOnly: closedOnly,
 				}
 				if ticketMineFlag {
 					filter.Assignee = userID
@@ -168,7 +208,7 @@ func newTicketCmd() *cobra.Command {
 				if projMsg == "" {
 					projMsg = "todos"
 				}
-				fmt.Printf("\n[info] Total: %d tareas | Proyecto: %s | Abiertas: %t\n", len(items), projMsg, ticketOpenFlag)
+				fmt.Printf("\n[info] Total: %d tareas | Proyecto: %s | Abiertas: %t | Cerradas: %t\n", len(items), projMsg, openOnly, closedOnly)
 			}
 		},
 	}
@@ -181,7 +221,10 @@ func newTicketCmd() *cobra.Command {
 	ticketListCmd.Flags().BoolVar(&ticketMineFlag, "mine", false, "Solo tareas asignadas a ti")
 	ticketListCmd.Flags().BoolVar(&ticketCreatedFlag, "created", false, "Solo tareas creadas por ti")
 	ticketListCmd.Flags().BoolVar(&ticketInvolvedFlag, "involved", false, "Tareas asignadas, creadas o con actividad tuya")
-	ticketListCmd.Flags().BoolVar(&ticketOpenFlag, "open", false, "Solo tareas abiertas")
+	ticketListCmd.Flags().BoolVar(&ticketOpenFlag, "open", false, "Solo tareas abiertas (comportamiento por defecto)")
+	ticketListCmd.Flags().BoolVar(&ticketClosedFlag, "closed", false, "Solo tareas cerradas (completadas o canceladas)")
+	ticketListCmd.Flags().BoolVar(&ticketAllStatesFlag, "all", false, "Incluir tareas en cualquier estado (desactiva filtro de abiertas)")
+	ticketListCmd.Flags().BoolVar(&ticketAllStatesFlag, "all-states", false, "Alias de --all")
 	ticketListCmd.Flags().BoolVar(&ticketVerboseFlag, "verbose", false, "Incluir notas informativas y cobertura")
 
 	// 2. ticket search

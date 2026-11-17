@@ -76,6 +76,7 @@ type IssueFilter struct {
 	CreatedBy    string
 	InvolvedBy   string
 	OpenOnly     bool
+	ClosedOnly   bool
 	ArchivedOnly bool
 	Query        string
 	Limit        int
