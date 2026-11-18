@@ -57,6 +57,12 @@ alo load --json            # Métricas en crudo para toma autónoma de decisione
 alo log PROJ-123 45 "Refactorización del dominio hexagonal" --bucket deep_work
 alo log OPS-24 15 "Resolución de alerta en monitoreo" --bucket toil_support
 
+# Tickets: mutaciones diferidas y adjuntos (requieren Plane; ver ADR 0032 y 0033)
+alo ticket update PROJ-123 --state Completado --labels backend,bug   # sin conexión: queda en la cola y se avisa (pending_sync)
+alo ticket attachment add PROJ-123 captura.png informe.md            # sube archivos reales a Plane
+alo ticket attachment list PROJ-123                                  # fuente declarada: api o copia local
+alo sync outbox            # aplica a Plane los cambios que quedaron en la cola
+
 # Orquestación de Espacios de Trabajo Multi-Repo (Git Worktrees)
 alo ws create PROJ-123 repo-api repo-web --base main
 alo ws list                # Ver worktrees activos y estado de modificación

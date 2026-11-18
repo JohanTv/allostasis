@@ -18,6 +18,8 @@
 | **0025** | [Stable read envelope contract allostasis/1](decisions/0025-json-read-contract.md) | accepted | Specification of the standard read envelope, family fields, error codes, and coverage metadata for all CLI read views. |
 | **0028** | [CQS separation and timestamp-based delta sync watermarks](decisions/0028-cqs-delta-sync-watermarks.md) | accepted | Architectural decision enforcing strict CQS (read views are 100% offline-first queries) and delta sync using ISO timestamps and SQLite sync_watermarks. |
 | **0031** | [Mutation Input Errors Fail Closed](decisions/0031-mutation-input-errors-fail-closed.md) | accepted | Mutations rejected for invalid input are surfaced, never queued as local tickets; labels resolve to UUIDs from the local catalog. |
+| **0032** | [Remote mutations: one dispatcher, classify then queue or fail loud](decisions/0032-remote-mutation-dispatch.md) | accepted | Every mutation toward Plane goes through TrackerService.dispatch, which classifies the failure and either applies, queues (and reports it) or surfaces the error. Unclassified errors are never swallowed. |
+| **0033** | [Ticket attachments: signed-upload protocol, no outbox, no simulated success](decisions/0033-ticket-attachments-require-plane.md) | accepted | alo ticket attachment add\|list\|delete\|replace uploads real files to Plane CE through its signed-storage protocol; it never queues and never reports a success it did not achieve. |
 
 ---
 

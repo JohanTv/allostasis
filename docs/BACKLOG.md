@@ -6,11 +6,9 @@ Open technical considerations, pending defects, and deferred improvements for Al
 
 ## 1. Known Defects
 
-- **Attachments regressed in the Go port (high):**
-  - **Context:** The legacy Python CLI uploaded attachments (`attachment add|list|delete|replace`, `create --attach`, `get --include attachments`). Reference: tag `archive/python-original`, `legacy/plane-tracker/scripts/plane_cli/attachments.py`.
-  - **Current state:** `TrackerService.AddAttachment` is a stub: it never reads the file or calls Plane, and fabricates `SizeBytes: 1024` and a fake `AssetURL`. No CLI command exposes it, `RemoteTrackerClient` has no attachment methods, and [ADR 0025](decisions/0025-json-read-contract.md) lists an `attachment list` view that does not exist.
-  - **Plane flow to restore:** `POST …/issues/{id}/issue-attachments/` (name, type, size) → multipart upload to `upload_data.url` with `upload_data.fields` (file last) → `PATCH …/{asset_id}/` with `is_uploaded: true`; on failure `DELETE` the pending asset. Validate before touching Plane: file exists, ≤ 50 MB, `.sql` rejected. Grammar per the CLI guard: `alo ticket attachment add|list|delete|replace`.
-- **`ticket update` drops transient remote failures silently (medium):** a network error or 5xx on `UpdateIssueRemote` is ignored and nothing is queued, so the local cache diverges from Plane without notice. Input rejections are already surfaced ([ADR 0031](decisions/0031-mutation-input-errors-fail-closed.md)); updates need an outbox event type.
+- **`ticket link list` falls back to the local copy silently (low):** `ListLinks` ignores a remote error and returns cached links without saying so. Give it the same `source`/`note` treatment as `ticket attachment list` ([ADR 0033](decisions/0033-ticket-attachments-require-plane.md)).
+- **Stream large attachments (low):** uploads read the whole file (≤ 50 MB) into memory; streaming needs a `Content-Length`-aware multipart writer.
+- **`ticket create --attach` / `ticket get --include attachments,links` not restored (decision pending):** the Python CLI had them; the CLI guard prefers composing `create` + `attachment add`. Restore only if wanted.
 - **Exit code contract is documented three ways (low):** `AGENTS.md` and `DEVELOPMENT.md` (`3` not found, `4` conflict), `CLI_DESIGN_GUARD.md` (`3` Plane unreachable) and `internal/presentation/errors` (`3` auth, `4` not found, `5` transient). Pick one and align the docs with the code.
 
 ---
@@ -38,6 +36,10 @@ Open technical considerations, pending defects, and deferred improvements for Al
 ---
 
 ## 3. Recently Implemented in Core Go
+
+- **Attachments restored end to end (`alo ticket attachment add|list|delete|replace`):** real signed-upload protocol with rollback, validation before the network, source-aware listing ([ADR 0033](decisions/0033-ticket-attachments-require-plane.md)). Replaced a stub that fabricated attachment metadata.
+- **Single remote-mutation dispatcher and `update_issue` outbox event:** a typed error classification with default-deny; transient failures are queued and reported (`pending_sync`), rejections and unclassified errors are shown ([ADR 0032](decisions/0032-remote-mutation-dispatch.md)). Fixes `ticket update` diverging from Plane without notice and `link add|delete` faking local records.
+- **Labels resolve to UUIDs from the local catalog; unknown labels and states fail closed** ([ADR 0031](decisions/0031-mutation-input-errors-fail-closed.md)).
 
 - **Hexagonal Architecture Decoupling:** Segregated domain, application services, canonical ports, and zero adapter-to-adapter leaks.
 - **Transactional Multi-Repo Worktrees:** Automatic sibling repository resolution, branch slug sanitization, and rollback upon creation failure (`alo ws`).
