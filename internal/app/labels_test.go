@@ -202,26 +202,33 @@ func TestUpdate_Labels_ResolvedClearedAndRejected(t *testing.T) {
 	}
 }
 
-func TestCreate_RejectedPropagates_TransientQueues(t *testing.T) {
+// La política única (ADR 0032): solo lo transitorio se encola; todo lo demás, incluido lo que nadie clasificó, se muestra.
+func TestCreate_DispatchPolicy(t *testing.T) {
 	cases := []struct {
 		name       string
 		err        error
 		wantErr    bool
 		wantOutbox int
 	}{
-		{"400 de Plane se muestra y no se encola", &issue.RejectedError{Status: 400, Operation: "crear tarea", Detail: "bad"}, true, 0},
-		{"500 de Plane sigue local-first", errors.New("Plane retornó HTTP 500 al crear tarea"), false, 1},
+		{"rechazo 400: se muestra", &issue.RejectedError{Status: 400, Operation: "crear tarea", Detail: "bad"}, true, 0},
+		{"transitorio 500: se encola", &issue.TransientError{Status: 500, Operation: "crear tarea"}, false, 1},
+		{"red caída: se encola", &issue.TransientError{Operation: "crear tarea", Cause: errors.New("connection refused")}, false, 1},
+		{"credenciales 401: se muestra", &issue.AuthError{Status: 401, Operation: "crear tarea"}, true, 0},
+		{"error sin clasificar: se muestra, no se pierde", errors.New("algo que nadie mapeó"), true, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &labelsClient{createErr: tc.err}
 			svc, store := newLabelsEnv(t, nil, client)
-			_, err := svc.Create(context.Background(), newCreate())
+			item, err := svc.Create(context.Background(), newCreate())
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr = %v", err, tc.wantErr)
 			}
 			if pending, _ := store.ListOutbox(context.Background(), true); len(pending) != tc.wantOutbox {
 				t.Errorf("outbox = %d, esperado %d", len(pending), tc.wantOutbox)
+			}
+			if tc.wantOutbox == 1 && (item == nil || !item.PendingSync) {
+				t.Errorf("una mutación encolada debe marcarse pending_sync para que se informe al usuario: %+v", item)
 			}
 		})
 	}

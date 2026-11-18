@@ -779,6 +779,16 @@ func (m *mockConcurrentTokenClient) DeleteLinkRemote(ctx context.Context, projec
 	return nil
 }
 
+func (m *mockConcurrentTokenClient) UploadAttachmentRemote(ctx context.Context, projectID, issueID string, up issue.AttachmentUpload) (*issue.Attachment, error) {
+	return &issue.Attachment{ID: "att-1", IssueID: issueID, Name: up.Name, SizeBytes: up.Size}, nil
+}
+func (m *mockConcurrentTokenClient) ListAttachmentsRemote(ctx context.Context, projectID, issueID string) ([]issue.Attachment, bool, error) {
+	return nil, true, nil
+}
+func (m *mockConcurrentTokenClient) DeleteAttachmentRemote(ctx context.Context, projectID, issueID, attachmentID string) error {
+	return nil
+}
+
 // TestE2EAdversarial_WALDoublePool_ExtremeConcurrency somete el motor SQLite
 // con arquitectura WAL Double-Pool (lector multiconexión y escritor único con busy_timeout)
 // a contención masiva con 40 goroutines simultáneas ejecutando:

@@ -502,6 +502,9 @@ func newTicketCmd() *cobra.Command {
 			}
 
 			fmt.Printf("✓ Tarea creada exitosamente: %s (%s)\n", created.Key, created.Title)
+			if created.PendingSync {
+				fmt.Println(pendingSyncNotice)
+			}
 		},
 	}
 	ticketCreateCmd.Flags().StringVarP(&createProjectFlag, "project", "p", "OMNIFY", "Proyecto destino (ej. OMNIFY, OPS)")
@@ -582,6 +585,9 @@ func newTicketCmd() *cobra.Command {
 			}
 
 			fmt.Printf("✓ Tarea %s actualizada: Estado=%s Prioridad=%s\n", updated.Key, updated.StateName, updated.Priority)
+			if updated.PendingSync {
+				fmt.Println(pendingSyncNotice)
+			}
 		},
 	}
 	ticketUpdateCmd.Flags().StringVar(&updateStateFlag, "state", "", "Nuevo estado")
@@ -1504,21 +1510,39 @@ func newTicketCmd() *cobra.Command {
 
 	ticketOutboxCmd.AddCommand(outboxListCmd, outboxDropCmd, outboxDLQCmd)
 
-	ticketCmd.AddCommand(ticketListCmd, ticketSearchCmd, ticketGetCmd, ticketCreateCmd, ticketUpdateCmd, ticketSyncCmd, ticketWhoamiCmd, ticketLabelsCmd, ticketDeleteCmd, ticketLinkCmd, ticketFocusCmd, ticketProjectsCmd, ticketStatesCmd, ticketCommentCmd, ticketOutboxCmd)
+	ticketCmd.AddCommand(ticketListCmd, ticketSearchCmd, ticketGetCmd, ticketCreateCmd, ticketUpdateCmd, ticketSyncCmd, ticketWhoamiCmd, ticketLabelsCmd, ticketDeleteCmd, ticketLinkCmd, ticketFocusCmd, ticketProjectsCmd, ticketStatesCmd, ticketCommentCmd, ticketOutboxCmd, newTicketAttachmentCmd())
 
 	return ticketCmd
 }
 
-// mutationErrorDetail clasifica el fallo de una mutación: un rechazo por datos inválidos (etiqueta
-// inexistente, 4xx de Plane) es un error de uso, no reintentable; el resto conserva la clasificación interna.
+// mutationErrorDetail traduce el fallo de una mutación remota a categoría, pista y código de salida según
+// issue.ClassifyRemoteError. Todo error cae en alguna clase; el valor por defecto es "internal"/1, nunca silencio.
 func mutationErrorDetail(err error, code string) (errors.ErrorDetail, int) {
-	if !issue.IsInputError(err) {
-		return errors.ErrorDetail{Code: code, Category: errors.CategoryInternal}, errors.ExitGeneralError
+	switch issue.ClassifyRemoteError(err) {
+	case issue.RemoteErrRejected:
+		hint := "Plane rechazó los datos enviados; corrígelos y reintenta"
+		var unknownLabel *issue.UnknownLabelError
+		var unknownState *issue.UnknownStateError
+		var invalidAttachment *issue.InvalidAttachmentError
+		var precondition *issue.PreconditionError
+		switch {
+		case stderrors.As(err, &unknownLabel):
+			hint = "Lista las etiquetas válidas con 'alo ticket labels -p <PROYECTO> --refresh'"
+		case stderrors.As(err, &unknownState):
+			hint = "Lista los estados válidos con 'alo ticket states -p <PROYECTO>'"
+		case stderrors.As(err, &invalidAttachment) && invalidAttachment.Hint != "":
+			hint = invalidAttachment.Hint
+		case stderrors.As(err, &precondition) && precondition.Hint != "":
+			hint = precondition.Hint
+		}
+		return errors.ErrorDetail{Code: code, Category: errors.CategoryUserInput, Hint: hint, Recoverable: true}, errors.ExitUsageError
+	case issue.RemoteErrAuth:
+		return errors.ErrorDetail{Code: code, Category: errors.CategoryAuth, Hint: "Verifica PLANE_API_KEY y los permisos con 'alo ticket whoami'", Recoverable: true}, errors.ExitAuthError
+	case issue.RemoteErrTransient:
+		return errors.ErrorDetail{Code: code, Category: errors.CategoryUpstreamService, Hint: "Plane no respondió; reintenta cuando haya conexión", Recoverable: true}, errors.ExitTransientError
 	}
-	hint := "Plane rechazó los datos enviados; corrígelos y reintenta"
-	var unknown *issue.UnknownLabelError
-	if stderrors.As(err, &unknown) {
-		hint = "Lista las etiquetas válidas con 'alo ticket labels -p <PROYECTO> --refresh'"
-	}
-	return errors.ErrorDetail{Code: code, Category: errors.CategoryUserInput, Hint: hint, Recoverable: true}, errors.ExitUsageError
+	return errors.ErrorDetail{Code: code, Category: errors.CategoryInternal}, errors.ExitGeneralError
 }
+
+// pendingSyncNotice avisa que la mutación quedó solo en el outbox local: no debe pasar desapercibido.
+const pendingSyncNotice = "⚠ Plane no respondió: el cambio quedó en la cola local y se enviará con 'alo sync' (revisa 'alo ticket outbox')."

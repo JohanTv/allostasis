@@ -128,62 +128,78 @@ func (s *TrackerService) Create(ctx context.Context, input issue.CreateIssueInpu
 		stateGroup = "backlog"
 	}
 
-	// 3. Intentar creación remota en Plane CE si el cliente está disponible
-	if s.client != nil && projectID != "" {
+	// 3. Crear en Plane CE o, si no hay conexión, en local con cola outbox (despacho único, ADR 0032)
+	var created, queued *issue.WorkItem
+	enqueue := func(ctx context.Context) error {
+		nowNano := time.Now().UnixNano()
+		localKey := fmt.Sprintf("%s-LOCAL-%d", input.ProjectKey, (nowNano/1000)%100000)
+		localItem := &issue.WorkItem{
+			ID:          fmt.Sprintf("local-%d", nowNano),
+			Key:         localKey,
+			ProjectID:   projectID,
+			ProjectKey:  input.ProjectKey,
+			Title:       input.Title,
+			Description: input.Description,
+			StateName:   input.StateName,
+			StateGroup:  stateGroup,
+			State:       issue.State(stateGroup),
+			Priority:    input.Priority,
+			Labels:      input.Labels,
+			LabelsCSV:   strings.Join(input.Labels, ","),
+			StartDate:   input.StartDate,
+			TargetDate:  input.TargetDate,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+		if err := s.store.SaveIssue(ctx, localItem); err != nil {
+			return fmt.Errorf("error al guardar tarea en caché local: %w", err)
+		}
+		payloadBytes, _ := json.Marshal(input)
+		if err := s.store.EnqueueOutboxWithMutation(ctx, fmt.Sprintf("client-%d", nowNano), localKey, string(payloadBytes), "", "create_issue"); err != nil {
+			return fmt.Errorf("error al encolar en outbox: %w", err)
+		}
+		localItem.PendingSync = true
+		queued = localItem
+		return nil
+	}
+	send := func(ctx context.Context) error {
 		remoteInput, canSend, err := s.createInputWithLabelIDs(ctx, projectID, input)
 		if err != nil {
+			return err
+		}
+		if !canSend {
+			// Sin catálogo de etiquetas no se puede validar ni enviar: se trata como falta de conexión.
+			return &issue.TransientError{Operation: "resolver etiquetas", Cause: fmt.Errorf("catálogo de etiquetas no disponible")}
+		}
+		item, err := s.client.CreateIssueRemote(ctx, projectID, remoteInput, stateID)
+		if err != nil {
+			return err
+		}
+		if item == nil {
+			return fmt.Errorf("Plane no devolvió la tarea creada")
+		}
+		created = item
+		return nil
+	}
+
+	if projectID == "" { // proyecto sin resolver (sin catálogo ni conexión): solo local-first
+		if err := enqueue(ctx); err != nil {
 			return nil, err
 		}
-		if canSend {
-			created, err := s.client.CreateIssueRemote(ctx, projectID, remoteInput, stateID)
-			if err == nil && created != nil {
-				created.Labels, created.LabelsCSV = input.Labels, strings.Join(input.Labels, ",")
-				_ = s.store.SaveIssue(ctx, created)
-				rawJSON, _ := json.Marshal(created)
-				_ = s.store.SaveIssueSnapshot(ctx, created.ID, created.Key, string(rawJSON))
-				return created, nil
-			}
-			// Un rechazo por datos inválidos no se arregla reintentando: se muestra al usuario en lugar
-			// de encolarlo como tarea "local" que nunca sincronizará.
-			if issue.IsInputError(err) {
-				return nil, err
-			}
-		}
+		return queued, nil
 	}
-
-	// 4. Si Plane está offline o falla, crear en local-first con cola outbox
-	nowNano := time.Now().UnixNano()
-	localUUID := fmt.Sprintf("local-%d", nowNano)
-	localKey := fmt.Sprintf("%s-LOCAL-%d", input.ProjectKey, (nowNano/1000)%100000)
-
-	localItem := &issue.WorkItem{
-		ID:          localUUID,
-		Key:         localKey,
-		ProjectID:   projectID,
-		ProjectKey:  input.ProjectKey,
-		Title:       input.Title,
-		Description: input.Description,
-		StateName:   input.StateName,
-		StateGroup:  stateGroup,
-		State:       issue.State(stateGroup),
-		Priority:    input.Priority,
-		Labels:      input.Labels,
-		LabelsCSV:   strings.Join(input.Labels, ","),
-		StartDate:   input.StartDate,
-		TargetDate:  input.TargetDate,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+	disposition, err := s.dispatch(ctx, remoteMutation{Name: "crear tarea", Send: send, Enqueue: enqueue})
+	if err != nil {
+		return nil, err
 	}
-
-	if err := s.store.SaveIssue(ctx, localItem); err != nil {
-		return nil, fmt.Errorf("error al guardar tarea en caché local: %w", err)
+	if disposition == Queued {
+		return queued, nil
 	}
-
-	// Encolar evento outbox para reconciliación diferida
-	payloadBytes, _ := json.Marshal(input)
-	_ = s.store.EnqueueOutbox(ctx, fmt.Sprintf("client-%d", nowNano), localKey, string(payloadBytes), "")
-
-	return localItem, nil
+	created.Labels, created.LabelsCSV = input.Labels, strings.Join(input.Labels, ",")
+	_ = s.store.SaveIssue(ctx, created)
+	rawJSON, _ := json.Marshal(created)
+	_ = s.store.SaveIssueSnapshot(ctx, created.ID, created.Key, string(rawJSON))
+	return created, nil
 }
 
 // Update actualiza los campos de una tarea (estado, prioridad, título) local y remotamente.
@@ -247,23 +263,53 @@ func (s *TrackerService) Update(ctx context.Context, key string, input issue.Upd
 		item.CompletedAt = nil
 	}
 
-	// Intentar mutación upstream en Plane CE si hay conexión. Va antes de guardar en local para que un
-	// error de entrada (etiqueta inexistente) no deje la caché con datos que Plane rechazó.
-	if s.client != nil && item.ProjectID != "" && item.ID != "" && !strings.HasPrefix(item.ID, "local-") {
-		remoteInput := input
-		canSend := true
-		if input.Labels != nil && len(*input.Labels) > 0 {
-			ids, ok, err := s.resolveLabelIDs(ctx, item.ProjectID, *input.Labels)
-			if err != nil {
-				return nil, err
-			}
-			remoteInput.Labels, canSend = &ids, ok
+	// Plane identifica el estado por ID: si no se resuelve, el cambio se omitiría en silencio. Se valida
+	// contra el catálogo (refrescándolo una vez) antes de tocar nada.
+	if input.StateName != nil && *input.StateName != "" && stateID == "" && s.client != nil &&
+		item.ProjectID != "" && !strings.HasPrefix(item.ID, "local-") {
+		var err error
+		if stateID, err = s.resolveStateID(ctx, item.ProjectID, *input.StateName); err != nil {
+			return nil, err
 		}
-		if canSend {
-			if err := s.client.UpdateIssueRemote(ctx, item.ProjectID, item.ID, remoteInput, stateID); issue.IsInputError(err) {
-				return nil, err
-			}
+	}
+
+	// Mutación upstream (despacho único, ADR 0032): Plane si hay conexión, outbox `update_issue` si no.
+	// Va antes de guardar en local: un rechazo o un error no clasificado no deja la caché con datos
+	// que Plane no aceptó, y un cambio nunca queda solo en local sin quedar encolado.
+	if item.ProjectID != "" && item.ID != "" {
+		enqueue := func(ctx context.Context) error {
+			payload, _ := json.Marshal(input)
+			return s.store.EnqueueOutboxWithMutation(ctx, fmt.Sprintf("client-%d", time.Now().UnixNano()), item.Key, string(payload), "", "update_issue")
 		}
+		send := func(ctx context.Context) error {
+			remoteInput := input
+			if input.Labels != nil && len(*input.Labels) > 0 {
+				ids, ok, err := s.resolveLabelIDs(ctx, item.ProjectID, *input.Labels)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return &issue.TransientError{Operation: "resolver etiquetas", Cause: fmt.Errorf("catálogo de etiquetas no disponible")}
+				}
+				remoteInput.Labels = &ids
+			}
+			return s.client.UpdateIssueRemote(ctx, item.ProjectID, item.ID, remoteInput, stateID)
+		}
+
+		var disposition Disposition
+		var err error
+		if strings.HasPrefix(item.ID, "local-") {
+			// La tarea aún no existe en Plane: el cambio se encola y se reproduce tras su creación.
+			if err = enqueue(ctx); err == nil {
+				disposition = Queued
+			}
+		} else {
+			disposition, err = s.dispatch(ctx, remoteMutation{Name: "actualizar tarea", Send: send, Enqueue: enqueue})
+		}
+		if err != nil {
+			return nil, err
+		}
+		item.PendingSync = disposition == Queued
 	}
 
 	// Guardar cambio local en SQLite
@@ -272,6 +318,85 @@ func (s *TrackerService) Update(ctx context.Context, key string, input issue.Upd
 	}
 
 	return item, nil
+}
+
+// resolveStateID traduce el nombre de un estado a su ID desde el catálogo local, refrescándolo una vez si
+// falta. Un estado que sigue sin existir retorna *issue.UnknownStateError (con los válidos).
+func (s *TrackerService) resolveStateID(ctx context.Context, projectID, name string) (string, error) {
+	find := func(states []issue.StateRecord) string {
+		for _, st := range states {
+			if strings.EqualFold(st.Name, name) && st.ID != "" {
+				return st.ID
+			}
+		}
+		return ""
+	}
+	local, _ := s.store.ListStates(ctx, projectID)
+	if id := find(local); id != "" {
+		return id, nil
+	}
+	valid := local
+	if s.client != nil {
+		if fresh, err := s.SyncStates(ctx, projectID); err == nil {
+			if id := find(fresh); id != "" {
+				return id, nil
+			}
+			valid = fresh
+		}
+	}
+	names := make([]string, 0, len(valid))
+	for _, st := range valid {
+		names = append(names, st.Name)
+	}
+	return "", &issue.UnknownStateError{Name: name, Valid: names}
+}
+
+// replayUpdateIssue reproduce un `update_issue` diferido. Cualquier fallo queda registrado en el outbox
+// (visible en `alo ticket outbox`) y se reintenta en el siguiente flush hasta agotar los intentos.
+func (s *TrackerService) replayUpdateIssue(ctx context.Context, item issue.OutboxRecord, report *issue.SyncReport) {
+	fail := func(msg string) {
+		report.FailedComments++
+		report.Errors = append(report.Errors, msg)
+		_ = s.store.UpdateOutboxFailed(ctx, item.ID, msg)
+	}
+	var input issue.UpdateIssueInput
+	if err := json.Unmarshal([]byte(item.PayloadJSON), &input); err != nil {
+		fail(fmt.Sprintf("error decodificando UpdateIssueInput para %s: %s", item.TicketRef, err))
+		return
+	}
+	target, _ := s.store.GetIssue(ctx, item.TicketRef)
+	if target == nil || target.ID == "" || target.ProjectID == "" || strings.HasPrefix(target.ID, "local-") {
+		fail(fmt.Sprintf("la tarea %s aún no existe en Plane; el cambio se reintentará tras su creación", item.TicketRef))
+		return
+	}
+	var stateID string
+	if input.StateName != nil && *input.StateName != "" {
+		id, err := s.resolveStateID(ctx, target.ProjectID, *input.StateName)
+		if err != nil {
+			fail(err.Error())
+			return
+		}
+		stateID = id
+	}
+	remoteInput := input
+	if input.Labels != nil && len(*input.Labels) > 0 {
+		ids, ok, err := s.resolveLabelIDs(ctx, target.ProjectID, *input.Labels)
+		if err != nil {
+			fail(err.Error())
+			return
+		}
+		if !ok {
+			fail("catálogo de etiquetas no disponible; reintenta con conexión")
+			return
+		}
+		remoteInput.Labels = &ids
+	}
+	if err := s.client.UpdateIssueRemote(ctx, target.ProjectID, target.ID, remoteInput, stateID); err != nil {
+		fail(err.Error())
+		return
+	}
+	_ = s.store.UpdateOutboxSent(ctx, item.ID, target.ID)
+	report.SyncedIssues++
 }
 
 // SyncProjects descarga el catálogo de proyectos y los almacena localmente.
@@ -796,6 +921,11 @@ func (s *TrackerService) FlushOutbox(ctx context.Context, limit int) (*issue.Syn
 			item.TicketRef = migrated.Key
 		}
 
+		if item.MutationType == "update_issue" {
+			s.replayUpdateIssue(ctx, item, report)
+			continue
+		}
+
 		if isCreateIssueMutation(item) {
 			var input issue.CreateIssueInput
 			if err := json.Unmarshal([]byte(item.PayloadJSON), &input); err != nil {
@@ -1307,32 +1437,35 @@ func (s *TrackerService) Delete(ctx context.Context, key string, yes, discardWor
 	return summary, nil
 }
 
-// AddLink asocia un hipervínculo a una tarea.
+// AddLink asocia un hipervínculo a una tarea en Plane. No se difiere: sin conexión o si Plane falla,
+// retorna error en vez de guardar un enlace local que nunca existiría en Plane.
 func (s *TrackerService) AddLink(ctx context.Context, key, title, linkURL string) (*issue.Link, error) {
-	item, err := s.store.GetIssue(ctx, key)
+	item, err := s.remoteTarget(ctx, key)
 	if err != nil {
 		return nil, err
 	}
 	if title == "" {
 		title = linkURL
 	}
-
-	link := &issue.Link{
-		ID:        fmt.Sprintf("link-%d", time.Now().UnixNano()),
-		IssueID:   item.ID,
-		TicketID:  item.Key,
-		Title:     title,
-		URL:       linkURL,
-		CreatedAt: time.Now(),
+	var remote *issue.Link
+	_, err = s.dispatch(ctx, remoteMutation{
+		Name: "asociar enlace",
+		Send: func(ctx context.Context) error {
+			created, err := s.client.AddLinkRemote(ctx, item.ProjectID, item.ID, title, linkURL)
+			if err != nil {
+				return err
+			}
+			if created == nil || created.ID == "" {
+				return fmt.Errorf("Plane no devolvió el identificador del enlace")
+			}
+			remote = created
+			return nil
+		},
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	if s.client != nil && item.ProjectID != "" && item.ID != "" && !strings.HasPrefix(item.ID, "local-") {
-		remoteLink, err := s.client.AddLinkRemote(ctx, item.ProjectID, item.ID, title, linkURL)
-		if err == nil && remoteLink != nil {
-			link.ID = remoteLink.ID
-		}
-	}
-
+	link := &issue.Link{ID: remote.ID, IssueID: item.ID, TicketID: item.Key, Title: title, URL: linkURL, CreatedAt: time.Now()}
 	_ = s.store.AddLink(ctx, *link)
 	return link, nil
 }
@@ -1357,52 +1490,21 @@ func (s *TrackerService) ListLinks(ctx context.Context, key string) ([]issue.Lin
 	return s.store.ListLinks(ctx, item.Key)
 }
 
-// DeleteLink remueve un hipervínculo por su UUID.
+// DeleteLink elimina un hipervínculo en Plane y, solo si Plane lo confirma, de la copia local.
 func (s *TrackerService) DeleteLink(ctx context.Context, key, linkID string) error {
-	item, err := s.store.GetIssue(ctx, key)
-	if err == nil && item != nil && s.client != nil && item.ProjectID != "" && item.ID != "" && !strings.HasPrefix(item.ID, "local-") {
-		_ = s.client.DeleteLinkRemote(ctx, item.ProjectID, item.ID, linkID)
+	item, err := s.remoteTarget(ctx, key)
+	if err != nil {
+		return err
+	}
+	if _, err := s.dispatch(ctx, remoteMutation{
+		Name: "eliminar enlace",
+		Send: func(ctx context.Context) error {
+			return s.client.DeleteLinkRemote(ctx, item.ProjectID, item.ID, linkID)
+		},
+	}); err != nil {
+		return err
 	}
 	return s.store.DeleteLink(ctx, linkID)
-}
-
-// AddAttachment registra o sube archivos adjuntos para una tarea.
-func (s *TrackerService) AddAttachment(ctx context.Context, key string, filePaths []string) ([]issue.Attachment, error) {
-	item, err := s.store.GetIssue(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-
-	var attachments []issue.Attachment
-	for _, fp := range filePaths {
-		baseName := strings.TrimSpace(fp)
-		att := issue.Attachment{
-			ID:        fmt.Sprintf("att-%d", time.Now().UnixNano()),
-			IssueID:   item.ID,
-			TicketID:  item.Key,
-			Name:      baseName,
-			SizeBytes: 1024,
-			AssetURL:  fmt.Sprintf("/uploads/%s", baseName),
-			CreatedAt: time.Now(),
-		}
-		_ = s.store.AddAttachment(ctx, att)
-		attachments = append(attachments, att)
-	}
-	return attachments, nil
-}
-
-// ListAttachments lista los adjuntos de una tarea.
-func (s *TrackerService) ListAttachments(ctx context.Context, key string) ([]issue.Attachment, error) {
-	item, err := s.store.GetIssue(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	return s.store.ListAttachments(ctx, item.Key)
-}
-
-// DeleteAttachment elimina un archivo adjunto.
-func (s *TrackerService) DeleteAttachment(ctx context.Context, key, attID string) error {
-	return s.store.DeleteAttachment(ctx, attID)
 }
 
 // SetFocus fija el ticket activo en la sesión.

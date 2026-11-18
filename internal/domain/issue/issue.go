@@ -1,41 +1,8 @@
 package issue
 
 import (
-	"errors"
-	"fmt"
-	"strings"
 	"time"
 )
-
-// UnknownLabelError indica etiquetas que no existen en el proyecto: es un error de entrada,
-// no transitorio, así que no debe encolarse en outbox.
-type UnknownLabelError struct {
-	Names []string
-	Valid []string
-}
-
-func (e *UnknownLabelError) Error() string {
-	return fmt.Sprintf("etiqueta(s) desconocida(s): %s (válidas: %s)", strings.Join(e.Names, ", "), strings.Join(e.Valid, ", "))
-}
-
-// RejectedError indica que Plane rechazó la mutación por datos inválidos (400, 404, 409, 422).
-// Reintentarla no la arregla, así que no se encola ni se descarta en silencio: se muestra al usuario.
-type RejectedError struct {
-	Status    int
-	Operation string
-	Detail    string
-}
-
-func (e *RejectedError) Error() string {
-	return fmt.Sprintf("Plane retornó HTTP %d al %s: %s", e.Status, e.Operation, e.Detail)
-}
-
-// IsInputError reporta si err es un rechazo que debe propagarse en vez de encolarse en outbox.
-func IsInputError(err error) bool {
-	var unknown *UnknownLabelError
-	var rejected *RejectedError
-	return errors.As(err, &unknown) || errors.As(err, &rejected)
-}
 
 // State representa el grupo canónico alostático y de ciclo de vida de una tarea.
 type State string
@@ -54,6 +21,7 @@ type WorkItem struct {
 	Key             string     `json:"key"` // ej. OMNIFY-175, PROJ-10
 	ProjectID       string     `json:"project_id,omitempty"`
 	ProjectKey      string     `json:"project_key,omitempty"`
+	PendingSync     bool       `json:"pending_sync,omitempty"` // la mutación quedó en el outbox; no está en Plane todavía
 	SequenceID      int        `json:"sequence_id,omitempty"`
 	Title           string     `json:"title"`
 	Description     string     `json:"description,omitempty"`

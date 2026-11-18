@@ -121,11 +121,11 @@ func (m *mockAdversarialTrackerClient) CreateIssueRemote(ctx context.Context, pr
 	defer m.mu.Unlock()
 
 	if !m.isOnline {
-		return nil, fmt.Errorf("Plane CE offline (HTTP 503 / connection refused)")
+		return nil, &issue.TransientError{Operation: "crear tarea", Status: 503, Detail: "Plane CE offline"}
 	}
 	if m.failAttempts > 0 && m.currAttempts < m.failAttempts {
 		m.currAttempts++
-		return nil, fmt.Errorf("Plane CE sobrecargado temporalmente (intento %d/%d fallido)", m.currAttempts, m.failAttempts)
+		return nil, &issue.TransientError{Operation: "crear tarea", Status: 503, Detail: fmt.Sprintf("Plane CE sobrecargado temporalmente (intento %d/%d fallido)", m.currAttempts, m.failAttempts)}
 	}
 
 	m.seqCounter++
@@ -155,7 +155,7 @@ func (m *mockAdversarialTrackerClient) UpdateIssueRemote(ctx context.Context, pr
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.isOnline {
-		return fmt.Errorf("Plane CE offline")
+		return &issue.TransientError{Operation: "actualizar tarea", Status: 503, Detail: "Plane CE offline"}
 	}
 	return nil
 }
@@ -217,6 +217,16 @@ func (m *mockAdversarialTrackerClient) ListLinksRemote(ctx context.Context, proj
 }
 
 func (m *mockAdversarialTrackerClient) DeleteLinkRemote(ctx context.Context, projectID, issueID, linkID string) error {
+	return nil
+}
+
+func (m *mockAdversarialTrackerClient) UploadAttachmentRemote(ctx context.Context, projectID, issueID string, up issue.AttachmentUpload) (*issue.Attachment, error) {
+	return &issue.Attachment{ID: "att-1", IssueID: issueID, Name: up.Name, SizeBytes: up.Size}, nil
+}
+func (m *mockAdversarialTrackerClient) ListAttachmentsRemote(ctx context.Context, projectID, issueID string) ([]issue.Attachment, bool, error) {
+	return nil, true, nil
+}
+func (m *mockAdversarialTrackerClient) DeleteAttachmentRemote(ctx context.Context, projectID, issueID, attachmentID string) error {
 	return nil
 }
 

@@ -110,6 +110,15 @@ func (m *mockTrackerClient) CreateIssueRemote(ctx context.Context, projectID str
 func (m *mockTrackerClient) UpdateIssueRemote(ctx context.Context, projectID, issueID string, input issue.UpdateIssueInput, stateID string) error {
 	return nil
 }
+func (m *mockTrackerClient) UploadAttachmentRemote(ctx context.Context, projectID, issueID string, up issue.AttachmentUpload) (*issue.Attachment, error) {
+	return &issue.Attachment{ID: "att-remote-1", IssueID: issueID, Name: up.Name, SizeBytes: up.Size}, nil
+}
+func (m *mockTrackerClient) ListAttachmentsRemote(ctx context.Context, projectID, issueID string) ([]issue.Attachment, bool, error) {
+	return nil, true, nil
+}
+func (m *mockTrackerClient) DeleteAttachmentRemote(ctx context.Context, projectID, issueID, attachmentID string) error {
+	return nil
+}
 func (m *mockTrackerClient) DeleteIssueRemote(ctx context.Context, projectID, issueID string) error {
 	return nil
 }

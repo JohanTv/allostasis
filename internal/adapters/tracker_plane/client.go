@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -720,14 +721,28 @@ func (c *Client) SendCommentRaw(ctx context.Context, targetWS, projectID, issueI
 	return "", fmt.Errorf("Plane retornó HTTP %d: %s", resp.StatusCode, string(respBytes))
 }
 
-// mutationError distingue un rechazo por datos inválidos (no reintentable) de un fallo transitorio
-// o de autenticación, que sí pueden resolverse después y siguen el camino local-first.
+// mutationError clasifica la respuesta HTTP de una operación remota en un error tipado (ver issue.ClassifyRemoteError):
+// datos inválidos (rechazo), credenciales, fallo transitorio, o un error sin clasificar que se muestra tal cual.
 func mutationError(status int, operation string, body []byte) error {
-	switch status {
-	case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity:
-		return &issue.RejectedError{Status: status, Operation: operation, Detail: string(body)}
+	detail := string(body)
+	switch {
+	case status == http.StatusBadRequest, status == http.StatusNotFound, status == http.StatusConflict, status == http.StatusUnprocessableEntity:
+		return &issue.RejectedError{Status: status, Operation: operation, Detail: detail}
+	case status == http.StatusUnauthorized, status == http.StatusForbidden:
+		return &issue.AuthError{Status: status, Operation: operation, Detail: detail}
+	case status == http.StatusRequestTimeout, status == http.StatusTooManyRequests, status >= 500:
+		return &issue.TransientError{Operation: operation, Status: status, Detail: detail}
 	}
-	return fmt.Errorf("Plane retornó HTTP %d al %s: %s", status, operation, body)
+	return fmt.Errorf("Plane retornó HTTP %d al %s: %s", status, operation, detail)
+}
+
+// transportError envuelve un fallo de red o timeout como transitorio. Una cancelación del usuario
+// (Ctrl+C) no lo es: se devuelve tal cual para que no se encole.
+func transportError(operation string, err error) error {
+	if errors.Is(err, context.Canceled) {
+		return err
+	}
+	return &issue.TransientError{Operation: operation, Cause: err}
 }
 
 // CreateIssueRemote crea una tarea en Plane CE y retorna el modelo creado.
@@ -768,7 +783,7 @@ func (c *Client) CreateIssueRemote(ctx context.Context, projectID string, input 
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("error de red al crear tarea en Plane: %w", err)
+		return nil, transportError("crear tarea", err)
 	}
 	defer resp.Body.Close()
 
@@ -874,7 +889,7 @@ func (c *Client) UpdateIssueRemote(ctx context.Context, projectID, issueID strin
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("error de red al actualizar tarea en Plane: %w", err)
+		return transportError("actualizar tarea", err)
 	}
 	defer resp.Body.Close()
 

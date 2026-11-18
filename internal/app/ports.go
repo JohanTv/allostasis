@@ -116,4 +116,9 @@ type RemoteTrackerClient interface {
 	AddLinkRemote(ctx context.Context, projectID, issueID, title, linkURL string) (*issue.Link, error)
 	ListLinksRemote(ctx context.Context, projectID, issueID string) ([]issue.Link, error)
 	DeleteLinkRemote(ctx context.Context, projectID, issueID, linkID string) error
+	// Adjuntos: UploadAttachmentRemote ejecuta el protocolo de subida completo y no deja adjuntos pendientes si falla.
+	// ListAttachmentsRemote devuelve además si la lista está completa (Plane puede anunciar más páginas).
+	UploadAttachmentRemote(ctx context.Context, projectID, issueID string, upload issue.AttachmentUpload) (*issue.Attachment, error)
+	ListAttachmentsRemote(ctx context.Context, projectID, issueID string) ([]issue.Attachment, bool, error)
+	DeleteAttachmentRemote(ctx context.Context, projectID, issueID, attachmentID string) error
 }
