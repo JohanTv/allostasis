@@ -17,6 +17,7 @@
 | **0019** | [Person filters in list and verified assignment history](decisions/0019-person-filters-and-assignment-history.md) | accepted | Supported --mine, --created, and --involved filters over SQLite cache, tracking assignment events durable across cache refreshes. |
 | **0025** | [Stable read envelope contract allostasis/1](decisions/0025-json-read-contract.md) | accepted | Specification of the standard read envelope, family fields, error codes, and coverage metadata for all CLI read views. |
 | **0028** | [CQS separation and timestamp-based delta sync watermarks](decisions/0028-cqs-delta-sync-watermarks.md) | accepted | Architectural decision enforcing strict CQS (read views are 100% offline-first queries) and delta sync using ISO timestamps and SQLite sync_watermarks. |
+| **0031** | [Mutation Input Errors Fail Closed](decisions/0031-mutation-input-errors-fail-closed.md) | accepted | Mutations rejected for invalid input are surfaced, never queued as local tickets; labels resolve to UUIDs from the local catalog. |
 
 ---
 

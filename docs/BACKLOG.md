@@ -6,7 +6,12 @@ Open technical considerations, pending defects, and deferred improvements for Al
 
 ## 1. Known Defects
 
-*(None pending — all regression and concurrency tests passing with zero data races).*
+- **Attachments regressed in the Go port (high):**
+  - **Context:** The legacy Python CLI uploaded attachments (`attachment add|list|delete|replace`, `create --attach`, `get --include attachments`). Reference: tag `archive/python-original`, `legacy/plane-tracker/scripts/plane_cli/attachments.py`.
+  - **Current state:** `TrackerService.AddAttachment` is a stub: it never reads the file or calls Plane, and fabricates `SizeBytes: 1024` and a fake `AssetURL`. No CLI command exposes it, `RemoteTrackerClient` has no attachment methods, and [ADR 0025](decisions/0025-json-read-contract.md) lists an `attachment list` view that does not exist.
+  - **Plane flow to restore:** `POST …/issues/{id}/issue-attachments/` (name, type, size) → multipart upload to `upload_data.url` with `upload_data.fields` (file last) → `PATCH …/{asset_id}/` with `is_uploaded: true`; on failure `DELETE` the pending asset. Validate before touching Plane: file exists, ≤ 50 MB, `.sql` rejected. Grammar per the CLI guard: `alo ticket attachment add|list|delete|replace`.
+- **`ticket update` drops transient remote failures silently (medium):** a network error or 5xx on `UpdateIssueRemote` is ignored and nothing is queued, so the local cache diverges from Plane without notice. Input rejections are already surfaced ([ADR 0031](decisions/0031-mutation-input-errors-fail-closed.md)); updates need an outbox event type.
+- **Exit code contract is documented three ways (low):** `AGENTS.md` and `DEVELOPMENT.md` (`3` not found, `4` conflict), `CLI_DESIGN_GUARD.md` (`3` Plane unreachable) and `internal/presentation/errors` (`3` auth, `4` not found, `5` transient). Pick one and align the docs with the code.
 
 ---
 
