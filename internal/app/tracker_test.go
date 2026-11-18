@@ -390,7 +390,12 @@ func TestTrackerService_Comments_And_History(t *testing.T) {
 		t.Errorf("se esperaba 1 worklog en historial, obtenidos: %d", len(hist.Worklogs))
 	}
 
-	// 5. Update con asignación y etiquetas
+	// 5. Update con asignación y etiquetas (las etiquetas deben existir en el catálogo del proyecto)
+	for _, name := range []string{"performance", "database"} {
+		if err := store.SaveLabel(ctx, issue.Label{ID: "lbl-" + name, ProjectID: "proj-omnify", Name: name}); err != nil {
+			t.Fatalf("error guardando etiqueta: %v", err)
+		}
+	}
 	newAssignee := "usr-alice"
 	newLabels := []string{"performance", "database"}
 	newDesc := "Descripción actualizada"

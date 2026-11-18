@@ -130,12 +130,24 @@ func (s *TrackerService) Create(ctx context.Context, input issue.CreateIssueInpu
 
 	// 3. Intentar creación remota en Plane CE si el cliente está disponible
 	if s.client != nil && projectID != "" {
-		created, err := s.client.CreateIssueRemote(ctx, projectID, input, stateID)
-		if err == nil && created != nil {
-			_ = s.store.SaveIssue(ctx, created)
-			rawJSON, _ := json.Marshal(created)
-			_ = s.store.SaveIssueSnapshot(ctx, created.ID, created.Key, string(rawJSON))
-			return created, nil
+		remoteInput, canSend, err := s.createInputWithLabelIDs(ctx, projectID, input)
+		if err != nil {
+			return nil, err
+		}
+		if canSend {
+			created, err := s.client.CreateIssueRemote(ctx, projectID, remoteInput, stateID)
+			if err == nil && created != nil {
+				created.Labels, created.LabelsCSV = input.Labels, strings.Join(input.Labels, ",")
+				_ = s.store.SaveIssue(ctx, created)
+				rawJSON, _ := json.Marshal(created)
+				_ = s.store.SaveIssueSnapshot(ctx, created.ID, created.Key, string(rawJSON))
+				return created, nil
+			}
+			// Un rechazo por datos inválidos no se arregla reintentando: se muestra al usuario en lugar
+			// de encolarlo como tarea "local" que nunca sincronizará.
+			if issue.IsInputError(err) {
+				return nil, err
+			}
 		}
 	}
 
@@ -235,14 +247,28 @@ func (s *TrackerService) Update(ctx context.Context, key string, input issue.Upd
 		item.CompletedAt = nil
 	}
 
+	// Intentar mutación upstream en Plane CE si hay conexión. Va antes de guardar en local para que un
+	// error de entrada (etiqueta inexistente) no deje la caché con datos que Plane rechazó.
+	if s.client != nil && item.ProjectID != "" && item.ID != "" && !strings.HasPrefix(item.ID, "local-") {
+		remoteInput := input
+		canSend := true
+		if input.Labels != nil && len(*input.Labels) > 0 {
+			ids, ok, err := s.resolveLabelIDs(ctx, item.ProjectID, *input.Labels)
+			if err != nil {
+				return nil, err
+			}
+			remoteInput.Labels, canSend = &ids, ok
+		}
+		if canSend {
+			if err := s.client.UpdateIssueRemote(ctx, item.ProjectID, item.ID, remoteInput, stateID); issue.IsInputError(err) {
+				return nil, err
+			}
+		}
+	}
+
 	// Guardar cambio local en SQLite
 	if err := s.store.SaveIssue(ctx, item); err != nil {
 		return nil, fmt.Errorf("error actualizando tarea en SQLite: %w", err)
-	}
-
-	// Intentar mutación upstream en Plane CE si hay conexión
-	if s.client != nil && item.ProjectID != "" && item.ID != "" && !strings.HasPrefix(item.ID, "local-") {
-		_ = s.client.UpdateIssueRemote(ctx, item.ProjectID, item.ID, input, stateID)
 	}
 
 	return item, nil
@@ -826,14 +852,22 @@ func (s *TrackerService) FlushOutbox(ctx context.Context, limit int) (*issue.Syn
 				}
 			}
 
-			// 3. Crear remotamente en Plane CE
-			created, err := s.client.CreateIssueRemote(ctx, projectID, input, stateID)
+			// 3. Crear remotamente en Plane CE (etiquetas como UUID, desde el catálogo local)
+			remoteInput, canSend, err := s.createInputWithLabelIDs(ctx, projectID, input)
+			if err == nil && !canSend {
+				err = fmt.Errorf("catálogo de etiquetas no disponible; reintenta con conexión")
+			}
+			var created *issue.WorkItem
+			if err == nil {
+				created, err = s.client.CreateIssueRemote(ctx, projectID, remoteInput, stateID)
+			}
 			if err != nil {
 				report.FailedComments++
 				report.Errors = append(report.Errors, err.Error())
 				_ = s.store.UpdateOutboxFailed(ctx, item.ID, err.Error())
 				continue
 			}
+			created.Labels, created.LabelsCSV = input.Labels, strings.Join(input.Labels, ",")
 
 			// 4. Migrar el ticket local en la base de datos
 			localItem, _ := s.store.GetIssue(ctx, item.TicketRef)
@@ -999,6 +1033,65 @@ func (s *TrackerService) States(ctx context.Context, projectKey string, refresh 
 	}
 
 	return states, nil
+}
+
+// resolveLabelIDs traduce nombres de etiqueta a los UUID que exige Plane, desde el catálogo local
+// (se refresca desde Plane solo si falta alguna). Acepta el nombre sin distinguir mayúsculas o el UUID.
+// Una etiqueta que sigue sin existir tras refrescar retorna *issue.UnknownLabelError: se rechaza, no se ignora.
+// ok=false indica que no se pudo validar (sin conexión): quien llama sigue local-first con los nombres.
+func (s *TrackerService) resolveLabelIDs(ctx context.Context, projectID string, names []string) (ids []string, ok bool, err error) {
+	match := func() (found, unknown, valid []string) {
+		labels, _ := s.store.ListLabels(ctx, projectID)
+		byName := make(map[string]string, len(labels))
+		byID := make(map[string]bool, len(labels))
+		for _, l := range labels {
+			byName[strings.ToLower(l.Name)] = l.ID
+			byID[l.ID] = true
+			valid = append(valid, l.Name)
+		}
+		seen := make(map[string]bool, len(names))
+		for _, raw := range names {
+			name := strings.TrimSpace(raw)
+			id := byName[strings.ToLower(name)]
+			if id == "" && byID[name] {
+				id = name
+			}
+			switch {
+			case id == "":
+				unknown = append(unknown, name)
+			case !seen[id]:
+				seen[id] = true
+				found = append(found, id)
+			}
+		}
+		return found, unknown, valid
+	}
+
+	found, unknown, valid := match()
+	if len(unknown) > 0 {
+		if _, err := s.SyncLabels(ctx, projectID); err != nil {
+			return nil, false, nil
+		}
+		found, unknown, valid = match()
+	}
+	if len(unknown) > 0 {
+		return nil, true, &issue.UnknownLabelError{Names: unknown, Valid: valid}
+	}
+	return found, true, nil
+}
+
+// createInputWithLabelIDs prepara el input para Plane (etiquetas como UUID). canSend=false: sin catálogo, no enviar.
+func (s *TrackerService) createInputWithLabelIDs(ctx context.Context, projectID string, input issue.CreateIssueInput) (out issue.CreateIssueInput, canSend bool, err error) {
+	out = input
+	if len(input.Labels) == 0 {
+		return out, true, nil
+	}
+	ids, ok, err := s.resolveLabelIDs(ctx, projectID, input.Labels)
+	if err != nil || !ok {
+		return out, false, err
+	}
+	out.Labels = ids
+	return out, true, nil
 }
 
 // Labels retorna las etiquetas locales, sincronizándolas con Plane si se solicita refresh.

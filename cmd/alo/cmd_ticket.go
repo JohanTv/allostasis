@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -491,10 +492,8 @@ func newTicketCmd() *cobra.Command {
 				TargetDate:  createTargetDateFlag,
 			})
 			if err != nil {
-				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
-					Code:     "CREATE_FAILED",
-					Category: errors.CategoryInternal,
-				}, errors.ExitGeneralError, jsonFlag)
+				detail, exitCode := mutationErrorDetail(err, "CREATE_FAILED")
+				errors.EmitErrorWithDetail(err, detail, exitCode, jsonFlag)
 			}
 
 			if jsonFlag {
@@ -573,10 +572,8 @@ func newTicketCmd() *cobra.Command {
 
 			updated, err := svc.Update(ctx, args[0], input)
 			if err != nil {
-				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
-					Code:     "UPDATE_FAILED",
-					Category: errors.CategoryInternal,
-				}, errors.ExitGeneralError, jsonFlag)
+				detail, exitCode := mutationErrorDetail(err, "UPDATE_FAILED")
+				errors.EmitErrorWithDetail(err, detail, exitCode, jsonFlag)
 			}
 
 			if jsonFlag {
@@ -1510,4 +1507,18 @@ func newTicketCmd() *cobra.Command {
 	ticketCmd.AddCommand(ticketListCmd, ticketSearchCmd, ticketGetCmd, ticketCreateCmd, ticketUpdateCmd, ticketSyncCmd, ticketWhoamiCmd, ticketLabelsCmd, ticketDeleteCmd, ticketLinkCmd, ticketFocusCmd, ticketProjectsCmd, ticketStatesCmd, ticketCommentCmd, ticketOutboxCmd)
 
 	return ticketCmd
+}
+
+// mutationErrorDetail clasifica el fallo de una mutación: un rechazo por datos inválidos (etiqueta
+// inexistente, 4xx de Plane) es un error de uso, no reintentable; el resto conserva la clasificación interna.
+func mutationErrorDetail(err error, code string) (errors.ErrorDetail, int) {
+	if !issue.IsInputError(err) {
+		return errors.ErrorDetail{Code: code, Category: errors.CategoryInternal}, errors.ExitGeneralError
+	}
+	hint := "Plane rechazó los datos enviados; corrígelos y reintenta"
+	var unknown *issue.UnknownLabelError
+	if stderrors.As(err, &unknown) {
+		hint = "Lista las etiquetas válidas con 'alo ticket labels -p <PROYECTO> --refresh'"
+	}
+	return errors.ErrorDetail{Code: code, Category: errors.CategoryUserInput, Hint: hint, Recoverable: true}, errors.ExitUsageError
 }

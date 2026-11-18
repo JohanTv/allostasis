@@ -720,6 +720,16 @@ func (c *Client) SendCommentRaw(ctx context.Context, targetWS, projectID, issueI
 	return "", fmt.Errorf("Plane retornó HTTP %d: %s", resp.StatusCode, string(respBytes))
 }
 
+// mutationError distingue un rechazo por datos inválidos (no reintentable) de un fallo transitorio
+// o de autenticación, que sí pueden resolverse después y siguen el camino local-first.
+func mutationError(status int, operation string, body []byte) error {
+	switch status {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity:
+		return &issue.RejectedError{Status: status, Operation: operation, Detail: string(body)}
+	}
+	return fmt.Errorf("Plane retornó HTTP %d al %s: %s", status, operation, body)
+}
+
 // CreateIssueRemote crea una tarea en Plane CE y retorna el modelo creado.
 func (c *Client) CreateIssueRemote(ctx context.Context, projectID string, input issue.CreateIssueInput, stateID string) (*issue.WorkItem, error) {
 	if c == nil || c.cfg.APIKey == "" {
@@ -743,7 +753,7 @@ func (c *Client) CreateIssueRemote(ctx context.Context, projectID string, input 
 		payloadMap["target_date"] = input.TargetDate
 	}
 	if len(input.Labels) > 0 {
-		payloadMap["labels"] = input.Labels
+		payloadMap["labels"] = input.Labels // UUIDs: los resuelve TrackerService desde el catálogo local
 	}
 
 	payloadBytes, _ := json.Marshal(payloadMap)
@@ -767,7 +777,7 @@ func (c *Client) CreateIssueRemote(ctx context.Context, projectID string, input 
 		return nil, fmt.Errorf("error de red al recibir respuesta de creación: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("Plane retornó HTTP %d al crear tarea: %s", resp.StatusCode, string(respBytes))
+		return nil, mutationError(resp.StatusCode, "crear tarea", respBytes)
 	}
 
 	var created map[string]interface{}
@@ -843,7 +853,7 @@ func (c *Client) UpdateIssueRemote(ctx context.Context, projectID, issueID strin
 		}
 	}
 	if input.Labels != nil {
-		payloadMap["labels"] = *input.Labels
+		payloadMap["labels"] = *input.Labels // UUIDs; lista vacía = quitar todas las etiquetas
 	}
 	if input.StartDate != nil {
 		payloadMap["start_date"] = *input.StartDate
@@ -870,7 +880,7 @@ func (c *Client) UpdateIssueRemote(ctx context.Context, projectID, issueID strin
 
 	if resp.StatusCode != http.StatusOK {
 		respBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("Plane retornó HTTP %d al actualizar tarea: %s", resp.StatusCode, string(respBytes))
+		return mutationError(resp.StatusCode, "actualizar tarea", respBytes)
 	}
 
 	return nil
