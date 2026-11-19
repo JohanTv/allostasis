@@ -484,6 +484,10 @@ func (c *Client) FetchIssuesDelta(ctx context.Context, projectID, projectKey str
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
+			// 401/403 se tipan (AuthError) para que el sync distinga "sin permiso sobre este proyecto" de un fallo genérico.
+			if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+				return nil, newestUpdatedAt, &issue.AuthError{Status: resp.StatusCode, Operation: "listar tareas", Detail: string(body)}
+			}
 			return nil, newestUpdatedAt, fmt.Errorf("Plane retornó HTTP %d al listar tareas: %s", resp.StatusCode, string(body))
 		}
 
