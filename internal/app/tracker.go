@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -795,6 +796,10 @@ func (s *TrackerService) SyncUnified(ctx context.Context, opts issue.SyncUnified
 			}
 		}
 
+		// Un 403 sobre UN proyecto concreto (selección implícita) significa "no tengo permiso sobre ese proyecto":
+		// se omite y se informa aparte (SkippedProjects), no como error. Si lo piden explícito (-p) o si TODOS los
+		// proyectos dan 403 (credenciales o permisos mal configurados), sigue siendo error. El 401 nunca se omite.
+		var forbiddenErrs []string
 		for _, p := range targetProjects {
 			cutoffISO := ""
 			if !opts.Deep && s.store != nil {
@@ -806,6 +811,12 @@ func (s *TrackerService) SyncUnified(ctx context.Context, opts issue.SyncUnified
 			projStart := time.Now()
 			synced, newestUp, pages, err := s.SyncIssuesDelta(ctx, p.ProjectID, p.Identifier, limit, cutoffISO, opts.Deep)
 			if err != nil {
+				var authErr *issue.AuthError
+				if opts.ProjectKey == "" && errors.As(err, &authErr) && authErr.Status == 403 {
+					report.SkippedProjects = append(report.SkippedProjects, issue.SkippedProject{Project: p.Identifier, Reason: "sin permiso (HTTP 403)"})
+					forbiddenErrs = append(forbiddenErrs, fmt.Sprintf("sync issues %s: %v", p.Identifier, err))
+					continue
+				}
 				report.Errors = append(report.Errors, fmt.Sprintf("sync issues %s: %v", p.Identifier, err))
 				continue
 			}
@@ -830,6 +841,10 @@ func (s *TrackerService) SyncUnified(ctx context.Context, opts issue.SyncUnified
 					UpdatedAt:           time.Now(),
 				})
 			}
+		}
+		if len(forbiddenErrs) > 0 && len(forbiddenErrs) == len(targetProjects) {
+			report.Errors = append(report.Errors, forbiddenErrs...)
+			report.SkippedProjects = nil
 		}
 	}
 

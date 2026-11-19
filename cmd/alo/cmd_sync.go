@@ -85,6 +85,13 @@ Targets disponibles:
 					}
 				}
 			}
+			if len(report.SkippedProjects) > 0 {
+				names := make([]string, 0, len(report.SkippedProjects))
+				for _, sp := range report.SkippedProjects {
+					names = append(names, sp.Project)
+				}
+				fmt.Printf("   • Proyectos omitidos:  %s (sin permiso)\n", strings.Join(names, ", "))
+			}
 			if report.DurationMs > 0 {
 				fmt.Printf("   • Duración:            %d ms\n", report.DurationMs)
 			}

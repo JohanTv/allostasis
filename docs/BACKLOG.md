@@ -37,6 +37,7 @@ Open technical considerations, pending defects, and deferred improvements for Al
 
 ## 3. Recently Implemented in Core Go
 
+- **Un HTTP 403 por proyecto no es un error del sync:** como red de seguridad (la pertenencia puede cambiar entre la lista y la petición), un 403 al listar las tareas de un proyecto de selección implícita se omite y se informa en `skipped_projects`, sin degradar el estado ni llenar `errors`. Sigue siendo error si el proyecto se pide explícito (`-p`), si todos los proyectos dan 403 (credenciales o permisos mal configurados) o si es un 401.
 - **Attachments restored end to end (`alo ticket attachment add|list|delete|replace`):** real signed-upload protocol with rollback, validation before the network, source-aware listing ([ADR 0033](decisions/0033-ticket-attachments-require-plane.md)). Replaced a stub that fabricated attachment metadata.
 - **Single remote-mutation dispatcher and `update_issue` outbox event:** a typed error classification with default-deny; transient failures are queued and reported (`pending_sync`), rejections and unclassified errors are shown ([ADR 0032](decisions/0032-remote-mutation-dispatch.md)). Fixes `ticket update` diverging from Plane without notice and `link add|delete` faking local records.
 - **Labels resolve to UUIDs from the local catalog; unknown labels and states fail closed** ([ADR 0031](decisions/0031-mutation-input-errors-fail-closed.md)).

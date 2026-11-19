@@ -297,18 +297,26 @@ type SyncUnifiedOptions struct {
 	Limit       int    `json:"limit,omitempty"`
 }
 
+// SkippedProject describe un proyecto del workspace que el sync omitió por una condición esperada
+// (hoy: el usuario no tiene permiso sobre él, HTTP 403). No es un error del sync.
+type SkippedProject struct {
+	Project string `json:"project"`
+	Reason  string `json:"reason"`
+}
+
 // SyncUnifiedReport resume las operaciones ejecutadas en la sincronización unificada.
 type SyncUnifiedReport struct {
-	Status         string            `json:"status"`
-	Target         string            `json:"target"`
-	SentComments   int               `json:"sent_comments"`
-	FailedComments int               `json:"failed_comments"`
-	SyncedIssues   int               `json:"synced_issues"`
-	SyncedProjects int               `json:"synced_projects,omitempty"`
-	SyncedCatalogs bool              `json:"synced_catalogs,omitempty"`
-	Watermarks     map[string]string `json:"watermarks,omitempty"` // project -> server_high_watermark
-	Errors         []string          `json:"errors,omitempty"`
-	DurationMs     int64             `json:"duration_ms"`
+	Status          string            `json:"status"`
+	Target          string            `json:"target"`
+	SentComments    int               `json:"sent_comments"`
+	FailedComments  int               `json:"failed_comments"`
+	SyncedIssues    int               `json:"synced_issues"`
+	SyncedProjects  int               `json:"synced_projects,omitempty"`
+	SyncedCatalogs  bool              `json:"synced_catalogs,omitempty"`
+	Watermarks      map[string]string `json:"watermarks,omitempty"` // project -> server_high_watermark
+	SkippedProjects []SkippedProject  `json:"skipped_projects,omitempty"`
+	Errors          []string          `json:"errors,omitempty"`
+	DurationMs      int64             `json:"duration_ms"`
 }
 
 // IssueSnapshot contiene la tarea parseada y su payload JSON original sin procesar.
