@@ -417,6 +417,19 @@ func (s *TrackerService) SyncProjects(ctx context.Context) ([]issue.ProjectRecor
 	return projects, nil
 }
 
+// memberProjects descarta los proyectos de los que Plane informó que el usuario NO es miembro (públicos del
+// workspace que solo se ven en la lista): consultarlos da 403 y desperdicia 3 peticiones por proyecto en cada sync.
+// Un proyecto con pertenencia desconocida (nil) se conserva.
+func memberProjects(projects []issue.ProjectRecord) []issue.ProjectRecord {
+	out := make([]issue.ProjectRecord, 0, len(projects))
+	for _, p := range projects {
+		if !p.IsKnownNonMember() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // SyncStates descarga los estados de un proyecto y los almacena localmente.
 func (s *TrackerService) SyncStates(ctx context.Context, projectID string) ([]issue.StateRecord, error) {
 	if s.client == nil {
@@ -461,7 +474,7 @@ func (s *TrackerService) SyncCatalogs(ctx context.Context, projectKey string) er
 		return fmt.Errorf("error sincronizando proyectos: %w", err)
 	}
 
-	targetProjects := projects
+	targetProjects := memberProjects(projects)
 	if projectKey != "" {
 		targetProjects = nil
 		for _, p := range projects {
@@ -731,8 +744,8 @@ func (s *TrackerService) SyncUnified(ctx context.Context, opts issue.SyncUnified
 			projects = projs
 			report.SyncedProjects = len(projs)
 			report.SyncedCatalogs = true
-			// Sincronizar estados y etiquetas de cada proyecto
-			for _, p := range projs {
+			// Sincronizar estados y etiquetas de cada proyecto del que el usuario es miembro
+			for _, p := range memberProjects(projs) {
 				_, _ = s.SyncStates(ctx, p.ProjectID)
 				_, _ = s.SyncLabels(ctx, p.ProjectID)
 			}
@@ -787,13 +800,11 @@ func (s *TrackerService) SyncUnified(ctx context.Context, opts issue.SyncUnified
 			}
 			targetProjects = projects
 		} else {
-			// Por defecto: todos los proyectos registrados o el primero disponible
+			// Por defecto: los proyectos de los que el usuario es miembro (los públicos donde no lo es se omiten)
 			if len(projects) == 0 {
 				projects, _ = s.SyncProjects(ctx)
 			}
-			if len(projects) > 0 {
-				targetProjects = projects
-			}
+			targetProjects = memberProjects(projects)
 		}
 
 		// Un 403 sobre UN proyecto concreto (selección implícita) significa "no tengo permiso sobre ese proyecto":

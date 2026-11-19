@@ -268,6 +268,17 @@ func (c *Client) FetchProjects(ctx context.Context) ([]issue.ProjectRecord, erro
 		}
 	}
 
+	// Plane informa `is_member: true` solo en los proyectos del usuario y OMITE el campo en los públicos del workspace
+	// donde no es miembro. Si ningún proyecto trae el campo (otra versión de Plane) la pertenencia es desconocida
+	// (nil): no se excluye nada.
+	anyReportsMembership := false
+	for _, p := range rawProjects {
+		if _, ok := p["is_member"].(bool); ok {
+			anyReportsMembership = true
+			break
+		}
+	}
+
 	var records []issue.ProjectRecord
 	for _, p := range rawProjects {
 		id, _ := p["id"].(string)
@@ -281,6 +292,10 @@ func (c *Client) FetchProjects(ctx context.Context) ([]issue.ProjectRecord, erro
 			ProjectID:  id,
 			Name:       name,
 			Workspace:  c.cfg.Workspace,
+		}
+		if anyReportsMembership {
+			member, _ := p["is_member"].(bool)
+			rec.IsMember = &member
 		}
 		records = append(records, rec)
 	}

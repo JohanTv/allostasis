@@ -258,11 +258,7 @@ func newProjectsCmd() *cobra.Command {
 				return
 			}
 
-			fmt.Printf("%-12s %-36s %s\n", "PROYECTO", "ID", "NOMBRE")
-			fmt.Println(strings.Repeat("─", 80))
-			for _, p := range projects {
-				fmt.Printf("%-12s %-36s %s\n", p.Identifier, p.ProjectID, p.Name)
-			}
+			printProjectsTable(projects)
 		},
 	}
 }

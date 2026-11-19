@@ -227,7 +227,13 @@ type ProjectRecord struct {
 	ProjectID  string `json:"project_id"`
 	Name       string `json:"name"`
 	Workspace  string `json:"workspace"`
+	// IsMember es tri-estado: nil = desconocido (versión de Plane que no lo informa, o registro anterior a su
+	// persistencia). Solo un false explícito excluye al proyecto del sync por defecto; lo desconocido se sincroniza.
+	IsMember *bool `json:"is_member,omitempty"`
 }
+
+// IsKnownNonMember indica que Plane informó que el usuario NO pertenece al proyecto (lo ve por ser público del workspace).
+func (p ProjectRecord) IsKnownNonMember() bool { return p.IsMember != nil && !*p.IsMember }
 
 // StateRecord modela un estado de ticket por proyecto.
 type StateRecord struct {

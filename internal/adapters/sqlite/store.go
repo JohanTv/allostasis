@@ -291,6 +291,7 @@ func (s *Store) migrateBaseline() error {
 	}
 
 	// Migraciones defensivas idempotentes
+	_, _ = s.db.Exec(`ALTER TABLE projects ADD COLUMN is_member INTEGER NOT NULL DEFAULT 1`)
 	_, _ = s.db.Exec(`ALTER TABLE outbox ADD COLUMN target_workspace TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.Exec(`ALTER TABLE outbox ADD COLUMN plane_comment_id TEXT NOT NULL DEFAULT ''`)
 	_, _ = s.db.Exec(`ALTER TABLE outbox ADD COLUMN sent_at TEXT NOT NULL DEFAULT ''`)
@@ -756,20 +757,31 @@ func (s *Store) GetCommentsSnapshot(ctx context.Context, ticketID string) ([]iss
 // SaveProject almacena o actualiza la definición de un proyecto.
 func (s *Store) SaveProject(ctx context.Context, p ProjectRecord) error {
 	nowUnix := float64(time.Now().Unix())
-	query := `INSERT INTO projects(identifier, project_id, name, workspace, updated_at)
-	          VALUES(?, ?, ?, ?, ?)
+	// is_member: 0 solo cuando Plane informó que NO es miembro; desconocido (nil) se guarda como 1 (se sincroniza).
+	member := 1
+	if p.IsKnownNonMember() {
+		member = 0
+	}
+	query := `INSERT INTO projects(identifier, project_id, name, workspace, updated_at, is_member)
+	          VALUES(?, ?, ?, ?, ?, ?)
 	          ON CONFLICT(identifier) DO UPDATE SET
 	            project_id=excluded.project_id,
 	            name=excluded.name,
 	            workspace=excluded.workspace,
-	            updated_at=excluded.updated_at`
-	_, err := s.db.ExecContext(ctx, query, p.Identifier, p.ProjectID, p.Name, p.Workspace, nowUnix)
+	            updated_at=excluded.updated_at,
+	            is_member=excluded.is_member`
+	_, err := s.db.ExecContext(ctx, query, p.Identifier, p.ProjectID, p.Name, p.Workspace, nowUnix, member)
 	return err
+}
+
+func memberPtr(v int) *bool {
+	b := v != 0
+	return &b
 }
 
 // ListProjects retorna todos los proyectos registrados en la caché local.
 func (s *Store) ListProjects(ctx context.Context) ([]ProjectRecord, error) {
-	rows, err := s.reader.QueryContext(ctx, `SELECT identifier, project_id, name, workspace FROM projects ORDER BY identifier ASC`)
+	rows, err := s.reader.QueryContext(ctx, `SELECT identifier, project_id, name, workspace, is_member FROM projects ORDER BY identifier ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -778,9 +790,11 @@ func (s *Store) ListProjects(ctx context.Context) ([]ProjectRecord, error) {
 	var list []ProjectRecord
 	for rows.Next() {
 		var p ProjectRecord
-		if err := rows.Scan(&p.Identifier, &p.ProjectID, &p.Name, &p.Workspace); err != nil {
+		var member int
+		if err := rows.Scan(&p.Identifier, &p.ProjectID, &p.Name, &p.Workspace, &member); err != nil {
 			return nil, err
 		}
+		p.IsMember = memberPtr(member)
 		list = append(list, p)
 	}
 	return list, nil
@@ -790,14 +804,16 @@ func (s *Store) ListProjects(ctx context.Context) ([]ProjectRecord, error) {
 func (s *Store) GetProject(ctx context.Context, identifier string) (*ProjectRecord, error) {
 	identifier = strings.ToUpper(strings.TrimSpace(identifier))
 	var p ProjectRecord
-	err := s.reader.QueryRowContext(ctx, `SELECT identifier, project_id, name, workspace FROM projects WHERE identifier = ? OR project_id = ?`, identifier, identifier).
-		Scan(&p.Identifier, &p.ProjectID, &p.Name, &p.Workspace)
+	var member int
+	err := s.reader.QueryRowContext(ctx, `SELECT identifier, project_id, name, workspace, is_member FROM projects WHERE identifier = ? OR project_id = ?`, identifier, identifier).
+		Scan(&p.Identifier, &p.ProjectID, &p.Name, &p.Workspace, &member)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("proyecto no encontrado: %s", identifier)
 		}
 		return nil, err
 	}
+	p.IsMember = memberPtr(member)
 	return &p, nil
 }
 
