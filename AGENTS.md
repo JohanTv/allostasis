@@ -1,7 +1,7 @@
 # Directrices de Agentes: Allostasis (`alo`)
 
-> **Propósito:** Inducción técnica inmediata y salvaguardas operativas de desarrollo para agentes de IA.  
-> **Guía Exhaustiva de Ingeniería:** Si vas a modificar adaptadores, persistencia SQLite, subprocesos Git o crear RFCs/ADRs, es **OBLIGATORIO** leer [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) antes de editar código.
+> **Propósito:** Inducción técnica y salvaguardas operativas de desarrollo para agentes de IA en este repositorio.  
+> **Patrones y Arquitectura:** Para principios generales de arquitectura hexagonal, diseño SOLID y protocolo M2M en Go, consulta la habilidad [`go-cli-tui`](file:///home/johantv/.agents/skills/go-cli-tui/SKILL.md). Si vas a modificar adaptadores, persistencia SQLite o subprocesos Git, consulta [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
 ---
 
@@ -18,20 +18,16 @@ make docs        # Sincroniza docs/INDEX.md tras crear o actualizar RFCs/ADRs
 
 ---
 
-## 🛡️ 2. Reglas de Oro Innegociables (Hard Invariants)
+## 🛡️ 2. Invariantes Específicas del Repositorio
 
-1. **Pure-Go & Concurrencia:** Compilación estricta con `CGO_ENABLED=0`. Prohibido omitir el flag `-race` al ejecutar pruebas de repositorios o concurrencia (`go test -race ./...`).
-2. **Reloj Determinista:** Prohibido usar `time.Now()` en dominio o aplicación. Usa exclusivamente la abstracción canónica [`clock.Clock`](internal/domain/clock/clock.go) (`RealClock` en prod, `FrozenClock` en tests).
-3. **Aislamiento Hexagonal:**
-   - `internal/domain/` tiene **cero dependencias externas** (solo biblioteca estándar de Go).
-   - Queda terminantemente prohibido que un adaptador dependa o importe directamente a otro adaptador.
-4. **Aislamiento Hermético de Pruebas y Configuración:**
+1. **Pure-Go & Concurrencia:** Compilación estricta con `CGO_ENABLED=0`. Prohibido omitir el flag `-race` al ejecutar pruebas (`go test -race ./...`).
+2. **Reloj Determinista:** Prohibido usar `time.Now()` en dominio o aplicación. Usa exclusivamente la abstracción canónica [`clock.Clock`](file:///home/johantv/Code/allostasis/internal/domain/clock/clock.go) (`RealClock` en prod, `FrozenClock` en tests).
+3. **Aislamiento Hexagonal:** `internal/domain/` tiene **cero dependencias externas**. Un adaptador nunca importa directamente a otro adaptador.
+4. **Persistencia y Aislamiento de Tests:**
    - La resolución de base de datos se realiza exclusivamente mediante `internal/config.ResolveDatabasePath`.
-   - Prohibido que pruebas de CLI o unitarias (`go test`) apunten o muten la base de datos de producción (`~/.cache/allostasis/allostasis.db`). Todo harness debe correr aislado en `t.TempDir()` o con variables de entorno de prueba.
-5. **Blindaje Machine-to-Machine (`--json`):**
-   - Cuando se activa el flag `--json`, `stderr` debe permanecer en **0 bytes**. Ningún log, texto plano o traza puede contaminar `stderr`.
-   - Toda salida debe emitirse por `stdout` serializada en JSON bajo el contrato `ResponseEnvelope`.
-   - Códigos de salida POSIX estándar: `0` (éxito), `1` (fallo de dominio/ejecución), `2` (CLI usage), `3` (not found), `4` (conflicto/prerrequisito no cumplido).
+   - Prohibido que las pruebas apunten o muten la base de datos de producción (`~/.cache/allostasis/allostasis.db`). Todo harness corre aislado en `t.TempDir()`.
+5. **Protocolo Machine-to-Machine (`--json`):**
+   - Con `--json`, `stderr` permanece en **0 bytes** y `stdout` emite JSON bajo el contrato `ResponseEnvelope` (ver detalles en [`go-cli-tui`](file:///home/johantv/.agents/skills/go-cli-tui/SKILL.md)).
 
 ---
 
