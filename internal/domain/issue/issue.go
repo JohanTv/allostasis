@@ -35,13 +35,15 @@ type WorkItem struct {
 	CreatedBy       string     `json:"created_by,omitempty"`
 	Labels          []string   `json:"labels,omitempty"`
 	LabelsCSV       string     `json:"labels_csv,omitempty"`
-	CompletedAt     *time.Time `json:"completed_at,omitempty"`
-	StartDate       string     `json:"start_date,omitempty"`
-	TargetDate      string     `json:"target_date,omitempty"`
-	ArchivedAt      *time.Time `json:"archived_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-	RemoteUpdatedAt *time.Time `json:"remote_updated_at,omitempty"`
+	CompletedAt     *time.Time   `json:"completed_at,omitempty"`
+	StartDate       string       `json:"start_date,omitempty"`
+	TargetDate      string       `json:"target_date,omitempty"`
+	ArchivedAt      *time.Time   `json:"archived_at,omitempty"`
+	Attachments     []Attachment `json:"attachments,omitempty"`
+	Links           []Link       `json:"links,omitempty"`
+	CreatedAt       time.Time    `json:"created_at"`
+	UpdatedAt       time.Time    `json:"updated_at"`
+	RemoteUpdatedAt *time.Time   `json:"remote_updated_at,omitempty"`
 }
 
 // CreateIssueInput encapsula los datos requeridos para crear una tarea.

@@ -4,6 +4,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 
@@ -285,6 +286,8 @@ func newTicketCmd() *cobra.Command {
 	var getLastFlag int
 	var getHistoryFlag bool
 	var getOfflineFlag bool
+	var getAttachmentsFlag bool
+	var getLinksFlag bool
 	var getIncludeFlag string
 	ticketGetCmd := &cobra.Command{
 		Use:   "get <TICKET-ID>",
@@ -314,6 +317,10 @@ func newTicketCmd() *cobra.Command {
 						if getLastFlag == 0 {
 							getLastFlag = 10
 						}
+					case "attachments", "attachment":
+						getAttachmentsFlag = true
+					case "links", "link":
+						getLinksFlag = true
 					}
 				}
 			}
@@ -337,8 +344,24 @@ func newTicketCmd() *cobra.Command {
 				hist, _ = svc.GetHistory(ctx, item.Key)
 			}
 
+			var attListing *issue.AttachmentListing
+			if getAttachmentsFlag {
+				attListing, _ = svc.ListAttachments(ctx, item.Key)
+				if attListing != nil && attListing.Items != nil {
+					item.Attachments = attListing.Items
+				}
+			}
+
+			var linksListing *issue.LinkListing
+			if getLinksFlag {
+				linksListing, _ = svc.ListLinks(ctx, item.Key)
+				if linksListing != nil && linksListing.Items != nil {
+					item.Links = linksListing.Items
+				}
+			}
+
 			if jsonFlag {
-				if getLastFlag > 0 || getHistoryFlag {
+				if getLastFlag > 0 || getHistoryFlag || getAttachmentsFlag || getLinksFlag {
 					resp := map[string]interface{}{
 						"item": item,
 					}
@@ -350,6 +373,20 @@ func newTicketCmd() *cobra.Command {
 					}
 					if getHistoryFlag {
 						resp["history"] = hist
+					}
+					if getAttachmentsFlag {
+						attItems := []issue.Attachment{}
+						if attListing != nil && attListing.Items != nil {
+							attItems = attListing.Items
+						}
+						resp["attachments"] = attItems
+					}
+					if getLinksFlag {
+						linkItems := []issue.Link{}
+						if linksListing != nil && linksListing.Items != nil {
+							linkItems = linksListing.Items
+						}
+						resp["links"] = linkItems
 					}
 					errors.EmitSuccess(resp, true)
 					return
@@ -440,19 +477,48 @@ func newTicketCmd() *cobra.Command {
 				}
 			}
 
-			if len(comments) == 0 && hist == nil {
-				fmt.Printf("\nℹ Tip: Para ver la historia viva y comentarios, ejecuta: alo ticket get %s --include comments,history\n", item.Key)
+			if attListing != nil {
+				fmt.Printf("\n📎 Archivos Adjuntos (%d) [fuente: %s]:\n", len(attListing.Items), attListing.Source)
+				if len(attListing.Items) == 0 {
+					fmt.Printf("   (sin adjuntos)\n")
+				}
+				for _, a := range attListing.Items {
+					fmt.Printf("   • %s (%s) [%s]\n", a.Name, humanBytes(a.SizeBytes), a.ID)
+				}
+				if attListing.Note != "" {
+					fmt.Printf("   ⚠ %s\n", attListing.Note)
+				}
+			}
+
+			if linksListing != nil {
+				fmt.Printf("\n🔗 Enlaces Externos (%d) [fuente: %s]:\n", len(linksListing.Items), linksListing.Source)
+				if len(linksListing.Items) == 0 {
+					fmt.Printf("   (sin enlaces)\n")
+				}
+				for _, l := range linksListing.Items {
+					fmt.Printf("   • [%s] %s -> %s\n", l.ID, l.Title, l.URL)
+				}
+				if linksListing.Note != "" {
+					fmt.Printf("   ⚠ %s\n", linksListing.Note)
+				}
+			}
+
+			if len(comments) == 0 && hist == nil && attListing == nil && linksListing == nil {
+				fmt.Printf("\nℹ Tip: Para ver la historia viva, adjuntos o enlaces, ejecuta: alo ticket get %s --include comments,history,attachments,links\n", item.Key)
 			}
 		},
 	}
 	ticketGetCmd.Flags().IntVar(&getLastFlag, "last", 0, "Mostrar los últimos N comentarios")
 	ticketGetCmd.Flags().BoolVar(&getHistoryFlag, "history", false, "Mostrar historial de asignaciones y sesiones de esfuerzo")
 	ticketGetCmd.Flags().BoolVar(&getOfflineFlag, "offline", false, "Consultar únicamente desde la caché local sin llamadas a la red")
-	ticketGetCmd.Flags().StringVar(&getIncludeFlag, "include", "", "Secciones a incluir separadas por comas (ej. comments,history)")
+	ticketGetCmd.Flags().BoolVar(&getAttachmentsFlag, "attachments", false, "Incluir lista de archivos adjuntos")
+	ticketGetCmd.Flags().BoolVar(&getLinksFlag, "links", false, "Incluir lista de enlaces externos")
+	ticketGetCmd.Flags().StringVar(&getIncludeFlag, "include", "", "Secciones a incluir separadas por comas (ej. comments,history,attachments,links)")
 
 	// 4. ticket create
 	var createProjectFlag, createPriorityFlag, createStateFlag, createDescFlag string
 	var createStartDateFlag, createTargetDateFlag, createLabelsFlag string
+	var createAttachFlag []string
 	ticketCreateCmd := &cobra.Command{
 		Use:   "create <título>",
 		Short: "Crea una nueva tarea (en Plane CE o local si está offline)",
@@ -470,6 +536,49 @@ func newTicketCmd() *cobra.Command {
 			ctx := cmd.Context()
 			if ctx == nil {
 				ctx = context.Background()
+			}
+
+			// Pre-validación estricta de adjuntos antes de tocar Plane o la base de datos
+			if len(createAttachFlag) > 0 {
+				for _, p := range createAttachFlag {
+					info, err := os.Stat(p)
+					if err != nil {
+						errors.EmitErrorWithDetail(
+							&issue.InvalidAttachmentError{Path: p, Reason: "no existe o no se puede leer"},
+							errors.ErrorDetail{
+								Code:     "ATTACHMENT_INVALID",
+								Category: errors.CategoryUserInput,
+								Hint:     fmt.Sprintf("Verifica que el archivo exista: %s", p),
+							},
+							errors.ExitUsageError,
+							jsonFlag,
+						)
+					}
+					if !info.Mode().IsRegular() {
+						errors.EmitErrorWithDetail(
+							&issue.InvalidAttachmentError{Path: p, Reason: "no es un archivo regular"},
+							errors.ErrorDetail{
+								Code:     "ATTACHMENT_INVALID",
+								Category: errors.CategoryUserInput,
+								Hint:     fmt.Sprintf("La ruta no es un archivo regular: %s", p),
+							},
+							errors.ExitUsageError,
+							jsonFlag,
+						)
+					}
+					if err := issue.ValidateAttachmentFile(p, info.Size()); err != nil {
+						errors.EmitErrorWithDetail(
+							err,
+							errors.ErrorDetail{
+								Code:     "ATTACHMENT_INVALID",
+								Category: errors.CategoryUserInput,
+								Hint:     err.Error(),
+							},
+							errors.ExitUsageError,
+							jsonFlag,
+						)
+					}
+				}
 			}
 
 			var labels []string
@@ -496,12 +605,47 @@ func newTicketCmd() *cobra.Command {
 				errors.EmitErrorWithDetail(err, detail, exitCode, jsonFlag)
 			}
 
+			var uploaded []issue.Attachment
+			if len(createAttachFlag) > 0 {
+				if created.PendingSync || strings.HasPrefix(created.ID, "local-") {
+					// ADR 0033: Los adjuntos no se encolan offline
+					if !jsonFlag {
+						fmt.Printf("✓ Tarea creada exitosamente en local: %s (%s)\n", created.Key, created.Title)
+						fmt.Println(pendingSyncNotice)
+						fmt.Printf("⚠ Los adjuntos no se pueden subir offline. Súbelos cuando recuperes conexión:\n  alo ticket attachment add %s %s\n", created.Key, strings.Join(createAttachFlag, " "))
+					} else {
+						errors.EmitSuccess(created, true)
+					}
+					return
+				}
+
+				var attachErr error
+				uploaded, attachErr = svc.AddAttachments(ctx, created.Key, createAttachFlag)
+				if attachErr != nil {
+					if jsonFlag {
+						detail, exitCode := mutationErrorDetail(attachErr, "ATTACHMENT_ADD_FAILED")
+						detail.Context = map[string]interface{}{"item": created, "uploaded": uploaded}
+						errors.EmitErrorWithDetail(attachErr, detail, exitCode, true)
+					}
+					fmt.Printf("✓ Tarea creada exitosamente: %s (%s)\n", created.Key, created.Title)
+					for _, a := range uploaded {
+						fmt.Printf("  • Adjunto subido antes del fallo: %s (%s) [%s]\n", a.Name, humanBytes(a.SizeBytes), a.ID)
+					}
+					detail, exitCode := mutationErrorDetail(attachErr, "ATTACHMENT_ADD_FAILED")
+					errors.EmitErrorWithDetail(attachErr, detail, exitCode, false)
+				}
+				created.Attachments = uploaded
+			}
+
 			if jsonFlag {
 				errors.EmitSuccess(created, true)
 				return
 			}
 
 			fmt.Printf("✓ Tarea creada exitosamente: %s (%s)\n", created.Key, created.Title)
+			for _, a := range uploaded {
+				fmt.Printf("  • Adjunto subido: %s (%s) [%s]\n", a.Name, humanBytes(a.SizeBytes), a.ID)
+			}
 			if created.PendingSync {
 				fmt.Println(pendingSyncNotice)
 			}
@@ -515,6 +659,7 @@ func newTicketCmd() *cobra.Command {
 	ticketCreateCmd.Flags().StringVar(&createTargetDateFlag, "due-date", "", "Fecha límite / de entrega (YYYY-MM-DD)")
 	ticketCreateCmd.Flags().StringVar(&createTargetDateFlag, "target-date", "", "Alias de --due-date (YYYY-MM-DD)")
 	ticketCreateCmd.Flags().StringVar(&createLabelsFlag, "labels", "", "Etiquetas separadas por comas (ej. backend,p0,auth)")
+	ticketCreateCmd.Flags().StringSliceVar(&createAttachFlag, "attach", nil, "Archivos para adjuntar a la tarea (puede repetirse o separarse por comas)")
 
 	// 5. ticket update
 	var updateStateFlag, updatePriorityFlag, updateTitleFlag string

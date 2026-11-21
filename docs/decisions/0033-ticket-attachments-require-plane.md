@@ -16,7 +16,7 @@ The Go port lost attachments: `TrackerService.AddAttachment` was a stub that nev
 
 ## Decision
 
-1. **Grammar.** `alo ticket attachment add <TICKET> <FILE>...`, `list <TICKET>`, `delete <TICKET> <ATTACHMENT-ID>`, `replace <TICKET> <ATTACHMENT-ID> <FILE>` (sub-resource under `ticket`, like `link` and `comment`). `create --attach` and `get --include attachments` are **not** restored: they cross command domains ([CLI guard](../references/CLI_DESIGN_GUARD.md), filters 1-4) and compose from `create` then `attachment add`.
+1. **Grammar.** `alo ticket attachment add <TICKET> <FILE>...`, `list <TICKET>`, `delete <TICKET> <ATTACHMENT-ID>`, `replace <TICKET> <ATTACHMENT-ID> <FILE>` (sub-resource under `ticket`, like `link` and `comment`). In addition, ergonomic conveniences `alo ticket create --attach <FILE>...` and `alo ticket get --include attachments,links` are supported with strict pre-validation (fail-closed before mutation) and ADR 0033 offline safeguards.
 2. **Protocol (Plane CE).** `POST …/issue-attachments/` (name, type, size) returns `asset_id` and a signed `upload_data` → multipart `POST` of the file to that URL (signed fields first, file last) → `PATCH …/{asset_id}/` with `is_uploaded: true`. If the storage upload or the confirmation fails, the pending asset is deleted; if that cleanup also fails, the error says so.
 3. **The Plane API key never reaches the storage URL.** It is a third-party endpoint (S3/MinIO); only the signed fields authenticate it. Covered by a test.
 4. **No outbox.** A file can change or disappear before a sync, so an attachment is not deferrable (ADR 0032): without a connection, or on any failure, the command fails. Nothing is recorded as uploaded unless Plane confirmed it.

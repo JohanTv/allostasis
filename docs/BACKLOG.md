@@ -9,7 +9,6 @@ Open technical considerations, pending defects, and deferred improvements for Al
 Low-priority defects pending resolution:
 
 - **Stream large attachments (low):** uploads read the whole file (≤ 50 MB) into memory; streaming needs a `Content-Length`-aware multipart writer.
-- **`ticket create --attach` / `ticket get --include attachments,links` not restored (decision pending):** the Python CLI had them; the CLI guard prefers composing `create` + `attachment add`. Restore only if wanted.
 - **Exit code contract is documented three ways (low):** `AGENTS.md` and `DEVELOPMENT.md` (`3` not found, `4` conflict), `CLI_DESIGN_GUARD.md` (`3` Plane unreachable) and `internal/presentation/errors` (`3` auth, `4` not found, `5` transient). Pick one and align the docs with the code.
 
 ---
