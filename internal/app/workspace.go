@@ -12,11 +12,11 @@ import (
 // WorkspaceService orquesta la creación, inspección, auditoría y poda de contenedores worktree multi-repo.
 type WorkspaceService struct {
 	runner     WorkspaceRunner
-	issueStore IssueStore
+	issueStore IssueReader
 }
 
 // NewWorkspaceService crea una nueva instancia del servicio de worktrees desacoplado de infraestructura.
-func NewWorkspaceService(runner WorkspaceRunner, issueStore IssueStore) *WorkspaceService {
+func NewWorkspaceService(runner WorkspaceRunner, issueStore IssueReader) *WorkspaceService {
 	return &WorkspaceService{
 		runner:     runner,
 		issueStore: issueStore,

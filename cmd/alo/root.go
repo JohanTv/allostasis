@@ -59,7 +59,7 @@ func initTrackerService() (*app.TrackerService, *sqlite.Store, error) {
 		client = tracker_plane.NewClient(planeCfg)
 	}
 
-	svc := app.NewTrackerService(store, client)
+	svc := app.NewTrackerService(store, client, clock.NewRealClock())
 	return svc, store, nil
 }
 

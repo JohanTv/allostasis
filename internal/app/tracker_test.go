@@ -545,3 +545,43 @@ func TestTrackerService_SyncUnified_TargetsAndWatermarks(t *testing.T) {
 		t.Errorf("resultado all inesperado: %+v", allRep)
 	}
 }
+
+func TestTrackerService_DeterministicClock(t *testing.T) {
+	ctx := context.Background()
+	frozenTime := time.Date(2026, 11, 21, 15, 30, 0, 0, time.UTC)
+	frozenClock := clock.NewFrozenClock(frozenTime)
+
+	store, err := sqlite.NewStore(":memory:")
+	if err != nil {
+		t.Fatalf("error abriendo store: %v", err)
+	}
+	defer store.Close()
+
+	_ = store.SaveProject(ctx, issue.ProjectRecord{Identifier: "OMNIFY", ProjectID: "proj-1", Name: "Omnify"})
+	svc := app.NewTrackerService(store, nil, frozenClock)
+
+	// 1. Create offline
+	item, err := svc.Create(ctx, issue.CreateIssueInput{
+		ProjectKey: "OMNIFY",
+		Title:      "Tarea con reloj determinista",
+	})
+	if err != nil {
+		t.Fatalf("error creando tarea: %v", err)
+	}
+	if !item.CreatedAt.Equal(frozenTime) || !item.UpdatedAt.Equal(frozenTime) {
+		t.Errorf("fechas no deterministas: created=%v, updated=%v, want=%v", item.CreatedAt, item.UpdatedAt, frozenTime)
+	}
+
+	// 2. Update completion
+	doneState := "completed"
+	_ = store.SaveState(ctx, issue.StateRecord{ID: "st-done", ProjectID: "proj-1", Name: "Completado", GroupName: "completed"})
+	updated, err := svc.Update(ctx, item.Key, issue.UpdateIssueInput{
+		StateName: &doneState,
+	})
+	if err != nil {
+		t.Fatalf("error actualizando tarea: %v", err)
+	}
+	if updated.CompletedAt == nil || !updated.CompletedAt.Equal(frozenTime) {
+		t.Errorf("CompletedAt no determinista: %v, want=%v", updated.CompletedAt, frozenTime)
+	}
+}

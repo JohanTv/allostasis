@@ -8,7 +8,18 @@ import (
 	"github.com/allostasis/alo/internal/domain/workspace"
 )
 
-// IssueStore define el contrato para el almacenamiento y consulta de tareas y metadatos locales.
+// IssueReader desacopla a los clientes (e.g. WorkspaceService) que únicamente necesitan consultar una tarea por clave o ID.
+type IssueReader interface {
+	GetIssue(ctx context.Context, key string) (*issue.WorkItem, error)
+}
+
+// CockpitStore define las operaciones mínimas de tareas y outbox requeridas por CockpitService según ISP.
+type CockpitStore interface {
+	ListIssues(ctx context.Context, state issue.State) ([]issue.WorkItem, error)
+	EnqueueOutboxWithMutation(ctx context.Context, clientID, ticketID, payload, mutationID, eventType string) error
+}
+
+// IssueStore define el contrato completo para el almacenamiento y consulta de tareas y metadatos locales.
 type IssueStore interface {
 	GetIssue(ctx context.Context, key string) (*issue.WorkItem, error)
 	ListIssues(ctx context.Context, state issue.State) ([]issue.WorkItem, error)

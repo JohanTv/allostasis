@@ -27,14 +27,14 @@ type CockpitSnapshot struct {
 
 // CockpitService orquesta la lectura y mutaciones de alto nivel desacoplado de infraestructura.
 type CockpitService struct {
-	issueStore   IssueStore
+	issueStore   CockpitStore
 	worklogStore WorklogStore
 	gitExec      WorkspaceRunner
 	clock        clock.Clock
 }
 
 // NewCockpitService crea el orquestador principal inyectando puertos de dominio y aplicación.
-func NewCockpitService(issueStore IssueStore, worklogStore WorklogStore, gitExec WorkspaceRunner, clk clock.Clock) *CockpitService {
+func NewCockpitService(issueStore CockpitStore, worklogStore WorklogStore, gitExec WorkspaceRunner, clk clock.Clock) *CockpitService {
 	if clk == nil {
 		clk = clock.NewRealClock()
 	}
