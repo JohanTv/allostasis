@@ -1077,12 +1077,16 @@ func (c *Client) ListLinksRemote(ctx context.Context, projectID, issueID string)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, transportError("listar enlaces", err)
 	}
 	defer resp.Body.Close()
 
-	var res []map[string]interface{}
 	respBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, mutationError(resp.StatusCode, "listar enlaces", respBytes)
+	}
+
+	var res []map[string]interface{}
 	var wrapper struct {
 		Results []map[string]interface{} `json:"results"`
 	}
@@ -1092,17 +1096,24 @@ func (c *Client) ListLinksRemote(ctx context.Context, projectID, issueID string)
 		_ = json.Unmarshal(respBytes, &res)
 	}
 
-	list := make([]issue.Link, 0)
+	list := make([]issue.Link, 0, len(res))
 	for _, item := range res {
 		id, _ := item["id"].(string)
 		title, _ := item["title"].(string)
 		linkURL, _ := item["url"].(string)
+		var createdAt time.Time
+		if cr, ok := item["created_at"].(string); ok && cr != "" {
+			createdAt, _ = time.Parse(time.RFC3339, cr)
+		}
+		if createdAt.IsZero() {
+			createdAt = time.Now()
+		}
 		list = append(list, issue.Link{
 			ID:        id,
 			IssueID:   issueID,
 			Title:     title,
 			URL:       linkURL,
-			CreatedAt: time.Now(),
+			CreatedAt: createdAt,
 		})
 	}
 	return list, nil

@@ -200,3 +200,43 @@ func TestClient_TrackerOperations(t *testing.T) {
 		t.Errorf("enlaces inesperados: %+v", links)
 	}
 }
+
+func TestClient_ListLinksRemote_Errors(t *testing.T) {
+	cases := []struct {
+		name     string
+		status   int
+		body     string
+		wantKind issue.RemoteErrorKind
+	}{
+		{"auth 401", http.StatusUnauthorized, `{"detail":"no autorizado"}`, issue.RemoteErrAuth},
+		{"auth 403", http.StatusForbidden, `{"detail":"prohibido"}`, issue.RemoteErrAuth},
+		{"transient 503", http.StatusServiceUnavailable, `{"detail":"unavailable"}`, issue.RemoteErrTransient},
+		{"transient 500", http.StatusInternalServerError, `{"detail":"server error"}`, issue.RemoteErrTransient},
+		{"rejected 400", http.StatusBadRequest, `{"detail":"bad request"}`, issue.RemoteErrRejected},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+
+			client := tracker_plane.NewClient(tracker_plane.Config{
+				BaseURL:   server.URL,
+				APIKey:    "test-key",
+				Workspace: "test-ws",
+				Timeout:   time.Second,
+			})
+
+			_, err := client.ListLinksRemote(context.Background(), "p1", "i1")
+			if err == nil {
+				t.Fatalf("esperaba error para status %d, obtuve nil", tc.status)
+			}
+			if got := issue.ClassifyRemoteError(err); got != tc.wantKind {
+				t.Errorf("clasificación errónea: got %v, want %v (err: %v)", got, tc.wantKind, err)
+			}
+		})
+	}
+}

@@ -1496,24 +1496,61 @@ func (s *TrackerService) AddLink(ctx context.Context, key, title, linkURL string
 	return link, nil
 }
 
-// ListLinks lista los hipervínculos asociados a una tarea.
-func (s *TrackerService) ListLinks(ctx context.Context, key string) ([]issue.Link, error) {
+// ListLinks lista los hipervínculos asociados a una tarea. Plane es la fuente de verdad: si responde,
+// la copia local se reconcilia (se descartan los eliminados). Si Plane no responde por un fallo transitorio,
+// se devuelve la copia local marcada como tal; cualquier otro fallo se muestra.
+func (s *TrackerService) ListLinks(ctx context.Context, key string) (*issue.LinkListing, error) {
+	if s.store == nil {
+		return nil, fmt.Errorf("almacenamiento no inicializado")
+	}
 	item, err := s.store.GetIssue(ctx, key)
 	if err != nil {
 		return nil, err
 	}
 
-	if s.client != nil && item.ProjectID != "" && item.ID != "" && !strings.HasPrefix(item.ID, "local-") {
-		links, err := s.client.ListLinksRemote(ctx, item.ProjectID, item.ID)
-		if err == nil && len(links) > 0 {
-			for _, l := range links {
-				l.TicketID = item.Key
-				_ = s.store.AddLink(ctx, l)
+	fromCache := func(note string) (*issue.LinkListing, error) {
+		items, err := s.store.ListLinks(ctx, item.Key)
+		if err != nil {
+			return nil, err
+		}
+		if items == nil {
+			items = make([]issue.Link, 0)
+		}
+		return &issue.LinkListing{Items: items, Source: "cache", Complete: false, Note: note}, nil
+	}
+
+	if s.client == nil || item.ProjectID == "" || item.ID == "" || strings.HasPrefix(item.ID, "local-") {
+		return fromCache("sin conexión con Plane o tarea aún local: copia local, puede estar desactualizada")
+	}
+
+	remote, err := s.client.ListLinksRemote(ctx, item.ProjectID, item.ID)
+	if err != nil {
+		if issue.ClassifyRemoteError(err) == issue.RemoteErrTransient {
+			return fromCache(fmt.Sprintf("Plane no respondió (%v): copia local, puede estar desactualizada", err))
+		}
+		return nil, err
+	}
+
+	if remote == nil {
+		remote = make([]issue.Link, 0)
+	}
+
+	seen := make(map[string]bool, len(remote))
+	for i := range remote {
+		remote[i].TicketID = item.Key
+		seen[remote[i].ID] = true
+		_ = s.store.AddLink(ctx, remote[i])
+	}
+
+	if cached, err := s.store.ListLinks(ctx, item.Key); err == nil {
+		for _, c := range cached {
+			if !seen[c.ID] {
+				_ = s.store.DeleteLink(ctx, c.ID)
 			}
 		}
 	}
 
-	return s.store.ListLinks(ctx, item.Key)
+	return &issue.LinkListing{Items: remote, Source: "api", Complete: true}, nil
 }
 
 // DeleteLink elimina un hipervínculo en Plane y, solo si Plane lo confirma, de la copia local.

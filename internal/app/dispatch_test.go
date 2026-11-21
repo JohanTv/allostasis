@@ -23,6 +23,8 @@ type scriptedClient struct {
 	uploadFailName                                    string // si no está vacío, solo falla la subida de ese archivo
 	listItems                                         []issue.Attachment
 	listComplete                                      bool
+	listLinksItems                                    []issue.Link
+	listLinksErr                                      error
 
 	calls      []string
 	updates    []issue.UpdateIssueInput
@@ -75,6 +77,14 @@ func (c *scriptedClient) AddLinkRemote(_ context.Context, _, issueID, title, url
 		return nil, c.linkErr
 	}
 	return &issue.Link{ID: "link-remote-1", IssueID: issueID, Title: title, URL: url}, nil
+}
+
+func (c *scriptedClient) ListLinksRemote(context.Context, string, string) ([]issue.Link, error) {
+	c.calls = append(c.calls, "list_links")
+	if c.listLinksErr != nil {
+		return nil, c.listLinksErr
+	}
+	return c.listLinksItems, nil
 }
 
 func (c *scriptedClient) DeleteLinkRemote(context.Context, string, string, string) error {

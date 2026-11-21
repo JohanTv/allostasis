@@ -8,7 +8,6 @@ Open technical considerations, pending defects, and deferred improvements for Al
 
 Low-priority defects pending resolution:
 
-- **`ticket link list` falls back to the local copy silently (low):** `ListLinks` ignores a remote error and returns cached links without saying so. Give it the same `source`/`note` treatment as `ticket attachment list` ([ADR 0033](decisions/0033-ticket-attachments-require-plane.md)).
 - **Stream large attachments (low):** uploads read the whole file (≤ 50 MB) into memory; streaming needs a `Content-Length`-aware multipart writer.
 - **`ticket create --attach` / `ticket get --include attachments,links` not restored (decision pending):** the Python CLI had them; the CLI guard prefers composing `create` + `attachment add`. Restore only if wanted.
 - **Exit code contract is documented three ways (low):** `AGENTS.md` and `DEVELOPMENT.md` (`3` not found, `4` conflict), `CLI_DESIGN_GUARD.md` (`3` Plane unreachable) and `internal/presentation/errors` (`3` auth, `4` not found, `5` transient). Pick one and align the docs with the code.
@@ -39,6 +38,7 @@ Low-priority defects pending resolution:
 
 ## 3. Recently Implemented in Core Go
 
+- **`ticket link list` reconcilia y declara procedencia (`source`/`note`):** Plane es la fuente de verdad y se reconcilian enlaces eliminados; ante fallos transitorios se expone la copia local con `source: "cache"` y nota explicativa, mientras que fallos de autenticación o rechazo se muestran ruidosamente ([ADR 0033](decisions/0033-ticket-attachments-require-plane.md)).
 - **`ticket create` upserta la tarea creada en la caché local:** después de crear remotamente, `SaveIssue` y `SaveIssueSnapshot` persisten el ítem para que `get`, `search`, `list` y `focus set` lo encuentren sin requerir `sync`.
 - **`alo ticket comment add` implementado:** comando completo con flags `--hours`, `--start-time` y `--track` para bitácoras de tiempo. También incluye `comment edit`, `comment delete` y `comment list`.
 - **`--labels` en `ticket create` y `ticket update`:** etiquetas separadas por comas se resuelven a UUIDs desde el catálogo local. `ticket update` acepta además `--desc`, `--assign`, `--start-date` y `--due-date`.

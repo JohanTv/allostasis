@@ -121,6 +121,15 @@ type Link struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// LinkListing es el resultado de listar hipervínculos, con la procedencia de los datos explícita:
+// "api" (Plane, autoritativo) o "cache" (copia local, posiblemente desactualizada, con Note del motivo).
+type LinkListing struct {
+	Items    []Link `json:"items"`
+	Source   string `json:"source"`
+	Complete bool   `json:"complete"`
+	Note     string `json:"note,omitempty"`
+}
+
 // WorklogRecord modela un registro resumido de tiempo asociado a un ticket para comprobaciones de integridad.
 type WorklogRecord struct {
 	PlaneCommentID  string `json:"plane_comment_id,omitempty"`

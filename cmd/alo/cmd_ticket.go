@@ -877,26 +877,33 @@ func newTicketCmd() *cobra.Command {
 				ctx = context.Background()
 			}
 
-			links, err := trackerSvc.ListLinks(ctx, args[0])
+			listing, err := trackerSvc.ListLinks(ctx, args[0])
 			if err != nil {
-				errors.EmitErrorWithDetail(err, errors.ErrorDetail{
-					Code:     "LINK_LIST_FAILED",
-					Category: errors.CategoryInternal,
-				}, errors.ExitGeneralError, jsonFlag)
+				detail, exitCode := mutationErrorDetail(err, "LINK_LIST_FAILED")
+				errors.EmitErrorWithDetail(err, detail, exitCode, jsonFlag)
 			}
 
-			if links == nil {
-				links = make([]issue.Link, 0)
+			if listing.Items == nil {
+				listing.Items = make([]issue.Link, 0)
 			}
 
 			if jsonFlag {
-				errors.EmitSuccess(links, true)
+				errors.EmitSuccess(map[string]interface{}{
+					"ticket":   args[0],
+					"source":   listing.Source,
+					"complete": listing.Complete,
+					"note":     listing.Note,
+					"links":    listing.Items,
+				}, true)
 				return
 			}
 
-			fmt.Printf("🔗 Enlaces para %s (%d):\n", args[0], len(links))
-			for _, l := range links {
+			fmt.Printf("🔗 Enlaces para %s (%d) [fuente: %s]:\n", args[0], len(listing.Items), listing.Source)
+			for _, l := range listing.Items {
 				fmt.Printf("  • [%s] %s -> %s\n", l.ID, l.Title, l.URL)
+			}
+			if listing.Note != "" {
+				fmt.Printf("⚠ %s\n", listing.Note)
 			}
 		},
 	}

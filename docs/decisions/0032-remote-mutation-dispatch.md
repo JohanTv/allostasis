@@ -39,4 +39,4 @@ Each remote mutation decided on its own what to do with a failure, and the rules
 
 - A new mutation cannot lose errors by omission: it either supplies `Enqueue` or fails on a transient error, and an unclassified error is shown.
 - Behavior change: `create`/`update` against a rejecting or unauthorized Plane now fail instead of queueing. Adapters must return typed errors; an untyped "offline" error is shown, not queued (test doubles model the adapter contract with `issue.TransientError`).
-- Known gap, tracked in the backlog: `ticket link list` falls back to the local copy without saying so.
+- `ticket link list` reconciles remote deletions and declares its source (`source`/`note`), mirroring `ticket attachment list` ([ADR 0033](0033-ticket-attachments-require-plane.md)).
