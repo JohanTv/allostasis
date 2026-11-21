@@ -182,7 +182,7 @@ func TestCLI_Ticket_Get_Include_Attachments_Links_JSON(t *testing.T) {
 	}
 }
 
-func TestCLI_Ticket_Get_Flags_Attachments_Links_Text(t *testing.T) {
+func TestCLI_Ticket_Get_Include_Attachments_Links_Text(t *testing.T) {
 	plane, srv := newServerWithAll(t)
 	plane.attachments["att-1"] = map[string]any{
 		"id":         "22222222-2222-2222-2222-222222222222",
@@ -198,10 +198,10 @@ func TestCLI_Ticket_Get_Flags_Attachments_Links_Text(t *testing.T) {
 
 	e := newE2EEnv(t, srv.URL)
 
-	// Invocación en modo texto con banderas individuales
-	run := e.run("ticket", "get", "OMNIFY-2", "--attachments", "--links")
+	// Invocación canónica en modo texto con --include attachments,links
+	run := e.run("ticket", "get", "OMNIFY-2", "--include", "attachments,links")
 	if run.exit != 0 || run.stderr != "" {
-		t.Fatalf("ticket get con banderas individuales falló: exit=%d stderr=%q stdout=%s", run.exit, run.stderr, run.stdout)
+		t.Fatalf("ticket get con --include falló: exit=%d stderr=%q stdout=%s", run.exit, run.stderr, run.stdout)
 	}
 
 	if !strings.Contains(run.stdout, "Archivos Adjuntos (1)") || !strings.Contains(run.stdout, "manual.pdf") {

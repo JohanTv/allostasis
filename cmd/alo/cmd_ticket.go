@@ -511,9 +511,7 @@ func newTicketCmd() *cobra.Command {
 	ticketGetCmd.Flags().IntVar(&getLastFlag, "last", 0, "Mostrar los últimos N comentarios")
 	ticketGetCmd.Flags().BoolVar(&getHistoryFlag, "history", false, "Mostrar historial de asignaciones y sesiones de esfuerzo")
 	ticketGetCmd.Flags().BoolVar(&getOfflineFlag, "offline", false, "Consultar únicamente desde la caché local sin llamadas a la red")
-	ticketGetCmd.Flags().BoolVar(&getAttachmentsFlag, "attachments", false, "Incluir lista de archivos adjuntos")
-	ticketGetCmd.Flags().BoolVar(&getLinksFlag, "links", false, "Incluir lista de enlaces externos")
-	ticketGetCmd.Flags().StringVar(&getIncludeFlag, "include", "", "Secciones a incluir separadas por comas (ej. comments,history,attachments,links)")
+	ticketGetCmd.Flags().StringVar(&getIncludeFlag, "include", "", "Secciones a incluir separadas por comas (comments,history,attachments,links)")
 
 	// 4. ticket create
 	var createProjectFlag, createPriorityFlag, createStateFlag, createDescFlag string
