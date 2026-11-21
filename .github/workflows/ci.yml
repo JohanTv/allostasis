@@ -33,14 +33,10 @@ jobs:
       - name: Run Table-Driven & Integration Tests
         run: go test -v -race ./...
 
-      - name: Compile Sovereign Binaries (CGO_ENABLED=0)
-        run: |
-          CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/alo ./cmd/alo
-          CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/alo-ws ./cmd/alo-ws
+      - name: Compile Sovereign Binary (CGO_ENABLED=0)
+        run: CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/alo ./cmd/alo
 
-      - name: Smoke Test Binaries
+      - name: Smoke Test Binary
         run: |
           ./bin/alo version
           ./bin/alo version --json
-          ./bin/alo-ws version
-          ./bin/alo-ws version --json
