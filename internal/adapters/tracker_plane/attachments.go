@@ -8,7 +8,9 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -24,27 +26,87 @@ const (
 	rollbackTimeout = 15 * time.Second
 )
 
+var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
+
+func escapeQuotes(s string) string {
+	return quoteEscaper.Replace(s)
+}
+
+func inspectCurrentSize(r io.Reader) (int64, bool) {
+	if st, ok := r.(interface{ Stat() (os.FileInfo, error) }); ok {
+		if info, err := st.Stat(); err == nil {
+			return info.Size(), true
+		}
+	}
+	if sz, ok := r.(interface{ Size() int64 }); ok {
+		return sz.Size(), true
+	}
+	if ln, ok := r.(interface{ Len() int }); ok {
+		return int64(ln.Len()), true
+	}
+	return 0, false
+}
+
+// exactSizeReader audita el flujo de bytes transmitidos en streaming para verificar
+// que coincida exactamente con el tamaño acordado sin bufferizar en memoria.
+type exactSizeReader struct {
+	r     io.Reader
+	name  string
+	total int64
+	read  int64
+}
+
+func (e *exactSizeReader) Read(p []byte) (int, error) {
+	if e.read >= e.total {
+		var extra [1]byte
+		n, err := e.r.Read(extra[:])
+		if n > 0 {
+			return 0, fmt.Errorf("'%s' cambió mientras se leía (superó los %d bytes esperados)", e.name, e.total)
+		}
+		if err != nil && err != io.EOF {
+			return 0, err
+		}
+		return 0, io.EOF
+	}
+
+	remaining := e.total - e.read
+	toRead := p
+	if int64(len(toRead)) > remaining {
+		toRead = toRead[:remaining]
+	}
+
+	n, err := e.r.Read(toRead)
+	e.read += int64(n)
+	if err == io.EOF && e.read < e.total {
+		return n, fmt.Errorf("'%s' cambió mientras se leía (se esperaban %d bytes, se leyeron %d)", e.name, e.total, e.read)
+	}
+	return n, err
+}
+
 func (c *Client) attachmentsURL(projectID, issueID string) string {
 	return fmt.Sprintf("%s/api/v1/workspaces/%s/projects/%s/issues/%s/issue-attachments/", c.cfg.BaseURL, c.cfg.Workspace, projectID, issueID)
 }
 
-// UploadAttachmentRemote sube un archivo a una tarea en tres pasos (el protocolo de adjuntos de Plane CE):
-// 1) registra el adjunto y recibe una subida firmada, 2) envía el archivo al almacenamiento firmado y
+// UploadAttachmentRemote sube un archivo a una tarea en tres pasos en streaming continuo O(1) de memoria:
+// 1) registra el adjunto y recibe una subida firmada, 2) transmite el stream al almacenamiento firmado y
 // 3) confirma con is_uploaded. Si el paso 2 o 3 falla, elimina el adjunto pendiente para no dejarlo huérfano.
 func (c *Client) UploadAttachmentRemote(ctx context.Context, projectID, issueID string, up issue.AttachmentUpload) (*issue.Attachment, error) {
 	if c == nil || c.cfg.APIKey == "" {
 		return nil, fmt.Errorf("PLANE_API_KEY no configurada")
 	}
-	data, err := io.ReadAll(io.LimitReader(up.Content, issue.MaxAttachmentBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("error leyendo '%s': %w", up.Name, err)
+	if up.Size > issue.MaxAttachmentBytes {
+		return nil, &issue.InvalidAttachmentError{
+			Path:   up.Name,
+			Reason: fmt.Sprintf("supera el máximo de %d MB", issue.MaxAttachmentBytes/(1024*1024)),
+		}
 	}
-	if int64(len(data)) != up.Size {
-		return nil, fmt.Errorf("'%s' cambió mientras se leía (se esperaban %d bytes, se leyeron %d)", up.Name, up.Size, len(data))
+	// Pre-inspección en O(1) de tamaño si la fuente lo expone (os.File, bytes.Reader, strings.Reader)
+	if curr, ok := inspectCurrentSize(up.Content); ok && curr != up.Size {
+		return nil, fmt.Errorf("'%s' cambió mientras se leía (se esperaban %d bytes, se leyeron %d)", up.Name, up.Size, curr)
 	}
 
 	// 1. Registrar el adjunto y obtener la subida firmada.
-	meta, _ := json.Marshal(map[string]interface{}{"name": up.Name, "type": up.ContentType, "size": len(data)})
+	meta, _ := json.Marshal(map[string]interface{}{"name": up.Name, "type": up.ContentType, "size": up.Size})
 	respBytes, status, err := c.doJSON(ctx, http.MethodPost, c.attachmentsURL(projectID, issueID), meta)
 	if err != nil {
 		return nil, transportError("registrar adjunto", err)
@@ -71,8 +133,8 @@ func (c *Client) UploadAttachmentRemote(ctx context.Context, projectID, issueID 
 		return nil, fmt.Errorf("respuesta inesperada de Plane al registrar el adjunto (sin asset_id o upload_data): %s", truncate(respBytes))
 	}
 
-	// 2 y 3, con limpieza del adjunto pendiente si algo falla.
-	if err := c.sendToStorage(ctx, created.UploadData.URL, created.UploadData.Fields, up, data); err != nil {
+	// 2 y 3, con streaming O(1) hacia almacenamiento firmado y limpieza del adjunto pendiente si algo falla.
+	if err := c.sendToStorage(ctx, created.UploadData.URL, created.UploadData.Fields, up); err != nil {
 		return nil, c.rollbackAttachment(projectID, issueID, created.AssetID, err)
 	}
 	confirm, _ := json.Marshal(map[string]bool{"is_uploaded": true})
@@ -88,15 +150,16 @@ func (c *Client) UploadAttachmentRemote(ctx context.Context, projectID, issueID 
 		ID:        created.AssetID,
 		IssueID:   issueID,
 		Name:      up.Name,
-		SizeBytes: int64(len(data)),
+		SizeBytes: up.Size,
 		AssetURL:  created.AssetURL,
 		CreatedAt: time.Now(),
 	}, nil
 }
 
-// sendToStorage envía el archivo al almacenamiento firmado. Es una URL de terceros (S3/MinIO): NUNCA lleva
-// el x-api-key de Plane. Los campos firmados van primero y el archivo al final, como exige el POST de S3.
-func (c *Client) sendToStorage(ctx context.Context, rawURL string, fields map[string]string, up issue.AttachmentUpload, data []byte) error {
+// sendToStorage transmite el archivo en streaming continuo (O(1) memoria) hacia el almacenamiento firmado.
+// S3 y MinIO exigen Content-Length conocido de antemano (rechazan chunked encoding) y requieren que los campos
+// firmados precedan obligatoriamente al part del archivo.
+func (c *Client) sendToStorage(ctx context.Context, rawURL string, fields map[string]string, up issue.AttachmentUpload) error {
 	target, err := url.Parse(rawURL)
 	if err != nil {
 		return fmt.Errorf("URL de subida inválida: %w", err)
@@ -105,8 +168,10 @@ func (c *Client) sendToStorage(ctx context.Context, rawURL string, fields map[st
 		target = base.ResolveReference(target)
 	}
 
-	var body bytes.Buffer
-	w := multipart.NewWriter(&body)
+	// 1. Construir el prefijo multipart con los campos ordenados y el header del archivo (~1 KB)
+	var prefix bytes.Buffer
+	w := multipart.NewWriter(&prefix)
+
 	keys := make([]string, 0, len(fields))
 	for k := range fields {
 		keys = append(keys, k)
@@ -117,21 +182,37 @@ func (c *Client) sendToStorage(ctx context.Context, rawURL string, fields map[st
 			return err
 		}
 	}
-	part, err := w.CreateFormFile("file", up.Name)
-	if err != nil {
-		return err
+
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, escapeQuotes(up.Name)))
+	contentType := up.ContentType
+	if contentType == "" {
+		contentType = "application/octet-stream"
 	}
-	if _, err := part.Write(data); err != nil {
-		return err
-	}
-	if err := w.Close(); err != nil {
+	h.Set("Content-Type", contentType)
+	if _, err := w.CreatePart(h); err != nil {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), &body)
+	// 2. Sufijo exacto de cierre multipart
+	suffix := []byte(fmt.Sprintf("\r\n--%s--\r\n", w.Boundary()))
+
+	// 3. Cálculo matemático exacto de Content-Length
+	totalContentLength := int64(prefix.Len()) + up.Size + int64(len(suffix))
+
+	// 4. Encadenamiento MultiReader sin tocar RAM para el cuerpo del archivo
+	checkedContent := &exactSizeReader{
+		r:     up.Content,
+		name:  up.Name,
+		total: up.Size,
+	}
+	bodyStream := io.MultiReader(bytes.NewReader(prefix.Bytes()), checkedContent, bytes.NewReader(suffix))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bodyStream)
 	if err != nil {
 		return err
 	}
+	req.ContentLength = totalContentLength
 	req.Header.Set("Content-Type", w.FormDataContentType())
 
 	resp, err := (&http.Client{Timeout: uploadTimeout}).Do(req)

@@ -6,9 +6,7 @@ Open technical considerations, pending defects, and deferred improvements for Al
 
 ## 1. Known Defects
 
-Low-priority defects pending resolution:
-
-- **Stream large attachments (low):** uploads read the whole file (≤ 50 MB) into memory; streaming needs a `Content-Length`-aware multipart writer. Documented decision in [ADR 0033](decisions/0033-ticket-attachments-require-plane.md).
+*None pending.*
 
 ---
 
@@ -36,6 +34,7 @@ Low-priority defects pending resolution:
 
 ## 3. Recently Implemented in Core Go
 
+- **Streaming de adjuntos de gran tamaño ($O(1)$ memory):** eliminación de lecturas en bloque (`io.ReadAll`) y duplicaciones en `bytes.Buffer`. Transmisión de adjuntos de hasta 50 MB mediante `io.MultiReader` con pre-inspección de tamaño y contabilidad estricta de `Content-Length` conforme al estándar de S3/MinIO ([ADR 0033](decisions/0033-ticket-attachments-require-plane.md)).
 - **`ticket create --attach` y `ticket get --include` implementados:** `create` acepta `--attach` para subir archivos junto con la tarea; `get` acepta `--include comments,history,attachments,links` para secciones opcionales.
 - **Exit code contract unificado en documentación:** `CLI_DESIGN_GUARD.md` y `DEVELOPMENT.md` ahora reflejan la matriz canónica de `envelope.go` (`0` éxito, `1` interno, `2` usage, `3` auth, `4` not found, `5` transitorio, `70` pánico).
 - **`ticket link list` reconcilia y declara procedencia (`source`/`note`):** Plane es la fuente de verdad y se reconcilian enlaces eliminados; ante fallos transitorios se expone la copia local con `source: "cache"` y nota explicativa, mientras que fallos de autenticación o rechazo se muestran ruidosamente ([ADR 0033](decisions/0033-ticket-attachments-require-plane.md)).
