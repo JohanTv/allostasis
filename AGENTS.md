@@ -27,7 +27,7 @@ make docs        # Sincroniza docs/INDEX.md tras crear o actualizar RFCs/ADRs
    - La resolución de base de datos se realiza exclusivamente mediante `internal/config.ResolveDatabasePath`.
    - Prohibido que las pruebas apunten o muten la base de datos de producción (`~/.cache/allostasis/allostasis.db`). Todo harness corre aislado en `t.TempDir()`.
 5. **Protocolo Machine-to-Machine (`--json`):**
-   - Con `--json`, `stderr` permanece en **0 bytes** y `stdout` emite JSON bajo el contrato `ResponseEnvelope` (ver detalles en [`go-cli-tui`](file:///home/johantv/.agents/skills/go-cli-tui/SKILL.md)).
+   - Con `--json`, `stderr` permanece en **0 bytes** y `stdout` emite JSON bajo el contrato `ResponseEnvelope`. La matriz normativa de códigos de salida reside en [`CLI_DESIGN_GUARD.md`](docs/references/CLI_DESIGN_GUARD.md) y [`go-cli-tui`](file:///home/johantv/.agents/skills/go-cli-tui/SKILL.md).
 
 ---
 
