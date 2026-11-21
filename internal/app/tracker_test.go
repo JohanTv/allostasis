@@ -91,7 +91,7 @@ func (m *mockTrackerClient) FetchLabels(ctx context.Context, projectID string) (
 func (m *mockTrackerClient) FetchIssues(ctx context.Context, projectID, projectKey string, limit int) ([]issue.IssueSnapshot, error) {
 	return []issue.IssueSnapshot{
 		{
-			Item: issue.WorkItem{ID: "iss-1", Key: "OMNIFY-10", ProjectID: projectID, Title: "Remote task"},
+			Item:    issue.WorkItem{ID: "iss-1", Key: "OMNIFY-10", ProjectID: projectID, Title: "Remote task"},
 			RawJSON: `{"id":"iss-1","title":"Remote task"}`,
 		},
 	}, nil
@@ -305,16 +305,16 @@ func TestTrackerService_Comments_And_History(t *testing.T) {
 
 	// Crear issue existente
 	item := &issue.WorkItem{
-		ID:         "iss-remote-555",
-		Key:        "OMNIFY-555",
-		ProjectID:  "proj-omnify",
-		Title:      "Investigar latencia en sync",
-		State:      issue.StateStarted,
-		StateName:  "En Progreso",
-		Priority:   "high",
-		CreatedBy:  "usr-johan",
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
+		ID:        "iss-remote-555",
+		Key:       "OMNIFY-555",
+		ProjectID: "proj-omnify",
+		Title:     "Investigar latencia en sync",
+		State:     issue.StateStarted,
+		StateName: "En Progreso",
+		Priority:  "high",
+		CreatedBy: "usr-johan",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	if err := store.SaveIssue(ctx, item); err != nil {
 		t.Fatalf("error guardando issue: %v", err)

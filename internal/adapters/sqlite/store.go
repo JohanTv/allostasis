@@ -904,8 +904,8 @@ func (s *Store) GetState(ctx context.Context, projectID, name string) (*StateRec
 	                                      FROM states s 
 	                                      LEFT JOIN projects p ON s.project_id = p.project_id
 	                                      WHERE (s.project_id = ? OR LOWER(p.identifier) = LOWER(?)) 
-	                                        AND (LOWER(s.name) = LOWER(?) OR LOWER(s.slug) = LOWER(?))`, 
-	                                      projectID, projectID, name, name).
+	                                        AND (LOWER(s.name) = LOWER(?) OR LOWER(s.slug) = LOWER(?))`,
+		projectID, projectID, name, name).
 		Scan(&st.ID, &st.ProjectID, &st.ProjectKey, &st.Name, &st.Slug, &st.GroupName, &defInt)
 	if err != nil {
 		if err == sql.ErrNoRows {

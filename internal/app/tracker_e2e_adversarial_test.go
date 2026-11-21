@@ -853,16 +853,16 @@ func TestE2EAdversarial_WALDoublePool_ExtremeConcurrency(t *testing.T) {
 	)
 
 	var (
-		wg             sync.WaitGroup
-		startBarrier   = make(chan struct{})
-		lockedErrors   int64
-		readErrors     int64
-		commentErrors  int64
-		logTimeErrors  int64
-		flushErrors    int64
-		watermarkErrs  int64
-		totalReadOps   int64
-		totalWriteOps  int64
+		wg            sync.WaitGroup
+		startBarrier  = make(chan struct{})
+		lockedErrors  int64
+		readErrors    int64
+		commentErrors int64
+		logTimeErrors int64
+		flushErrors   int64
+		watermarkErrs int64
+		totalReadOps  int64
+		totalWriteOps int64
 	)
 
 	// 3. Despliegue de los 40 trabajadores concurrentes

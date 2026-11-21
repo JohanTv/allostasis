@@ -139,19 +139,19 @@ summary: ID 0004 en archivo 0003
 
 	t.Run("InvalidName_Patterns", func(t *testing.T) {
 		invalidNames := []string{
-			"31-test.md",                    // Falta 4 dígitos
-			"3-test.md",                     // 1 dígito
-			"123-test.md",                   // 3 dígitos
-			"00001-test.md",                 // 5 dígitos
-			"0031-TEST-MAYUSCULAS.md",       // Mayúsculas
-			"0031-test_underscores.md",      // Guiones bajos
-			"0031-test espacios.md",         // Espacios
-			"0031-test$caracteres.md",       // Caracteres especiales
-			"0031-test!alerta.md",           // Signos de exclamación
-			"0031-.md",                      // Slug vacío
-			"0031--.md",                     // Solo guión
-			"0031-test-.md",                 // Guión colgante al final
-			"0031--test.md",                 // Doble guión consecutivo
+			"31-test.md",               // Falta 4 dígitos
+			"3-test.md",                // 1 dígito
+			"123-test.md",              // 3 dígitos
+			"00001-test.md",            // 5 dígitos
+			"0031-TEST-MAYUSCULAS.md",  // Mayúsculas
+			"0031-test_underscores.md", // Guiones bajos
+			"0031-test espacios.md",    // Espacios
+			"0031-test$caracteres.md",  // Caracteres especiales
+			"0031-test!alerta.md",      // Signos de exclamación
+			"0031-.md",                 // Slug vacío
+			"0031--.md",                // Solo guión
+			"0031-test-.md",            // Guión colgante al final
+			"0031--test.md",            // Doble guión consecutivo
 		}
 
 		for _, name := range invalidNames {
@@ -341,11 +341,11 @@ summary: Sin cierre
 		}{
 			{"decisions", "yolo"},
 			{"decisions", "pending"},
-			{"decisions", "proposed"},  // Válido para RFCs pero no para ADRs
-			{"decisions", "rejected"},  // Válido para RFCs pero no para ADRs
+			{"decisions", "proposed"}, // Válido para RFCs pero no para ADRs
+			{"decisions", "rejected"}, // Válido para RFCs pero no para ADRs
 			{"rfcs", "yolo"},
 			{"rfcs", "pending"},
-			{"rfcs", "deprecated"},     // Válido para ADRs pero no para RFCs
+			{"rfcs", "deprecated"}, // Válido para ADRs pero no para RFCs
 			{"rfcs", "UNKNOWN"},
 		}
 

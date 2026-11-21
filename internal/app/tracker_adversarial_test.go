@@ -232,12 +232,12 @@ func (m *mockAdversarialTrackerClient) DeleteAttachmentRemote(ctx context.Contex
 
 // TestAdversarial_OfflineOutboxReconciliation_FullCycle prueba el ciclo de vida completo
 // de operaciones local-first cuando el tracker remoto está desconectado:
-// 1. Creación offline de múltiples tareas en proyectos distintos.
-// 2. Registro offline de comentarios y worklogs asociados a los tickets locales provisionales.
-// 3. Intento fallido de FlushOutbox en modo desconectado (verificación de no-destrucción de la cola).
-// 4. Restauración de conectividad upstream y ejecución de FlushOutbox.
-// 5. Verificación de reconciliación canónica: migración de IDs y claves locales a Plane CE,
-//    actualización de worklogs dependientes, entrega de comentarios a UUIDs oficiales y limpieza de la outbox.
+//  1. Creación offline de múltiples tareas en proyectos distintos.
+//  2. Registro offline de comentarios y worklogs asociados a los tickets locales provisionales.
+//  3. Intento fallido de FlushOutbox en modo desconectado (verificación de no-destrucción de la cola).
+//  4. Restauración de conectividad upstream y ejecución de FlushOutbox.
+//  5. Verificación de reconciliación canónica: migración de IDs y claves locales a Plane CE,
+//     actualización de worklogs dependientes, entrega de comentarios a UUIDs oficiales y limpieza de la outbox.
 func TestAdversarial_OfflineOutboxReconciliation_FullCycle(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.NewStore(":memory:")

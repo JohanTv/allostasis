@@ -204,21 +204,21 @@ type TimeReportItem struct {
 
 // TimeReport consolida la distribución de esfuerzo en un periodo.
 type TimeReport struct {
-	Period          string            `json:"period"`
-	TotalMinutes    int               `json:"total_minutes"`
-	TotalHours      float64           `json:"total_hours"`
-	BucketBreakdown map[string]int    `json:"bucket_breakdown"`
-	Items           []TimeReportItem  `json:"items"`
+	Period          string           `json:"period"`
+	TotalMinutes    int              `json:"total_minutes"`
+	TotalHours      float64          `json:"total_hours"`
+	BucketBreakdown map[string]int   `json:"bucket_breakdown"`
+	Items           []TimeReportItem `json:"items"`
 }
 
 // FlowReport reporta métricas de lead time, cycle time y throughput.
 type FlowReport struct {
-	Period             string         `json:"period"`
-	CompletedCount     int            `json:"completed_count"`
-	AvgLeadTimeHours   float64        `json:"avg_lead_time_hours"`
-	AvgCycleTimeHours  float64        `json:"avg_cycle_time_hours"`
-	ThroughputPerWeek  float64        `json:"throughput_per_week"`
-	StateDistribution  map[string]int `json:"state_distribution"`
+	Period            string         `json:"period"`
+	CompletedCount    int            `json:"completed_count"`
+	AvgLeadTimeHours  float64        `json:"avg_lead_time_hours"`
+	AvgCycleTimeHours float64        `json:"avg_cycle_time_hours"`
+	ThroughputPerWeek float64        `json:"throughput_per_week"`
+	StateDistribution map[string]int `json:"state_distribution"`
 }
 
 // ProjectRecord modela un proyecto registrado en Plane/Allostasis.
