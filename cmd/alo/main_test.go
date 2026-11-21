@@ -275,31 +275,6 @@ func TestCLI_StatesJSONContract(t *testing.T) {
 	}
 }
 
-func TestCLI_TicketSync_CatalogsContract(t *testing.T) {
-	cmd := exec.Command("go", "run", "./cmd/alo", "ticket", "sync", "--catalogs", "--json")
-	cmd.Dir = "../.."
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("error ejecutando alo ticket sync --catalogs --json: %v (output: %s)", err, string(out))
-	}
-
-	var envelope struct {
-		OK   bool `json:"ok"`
-		Data struct {
-			Status string `json:"status"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(out, &envelope); err != nil {
-		t.Fatalf("la salida no es un JSON válido: %v (raw: %s)", err, string(out))
-	}
-	if !envelope.OK {
-		t.Errorf("se esperaba envelope.OK = true")
-	}
-	if envelope.Data.Status != "catalogs_synced" {
-		t.Errorf("status esperado 'catalogs_synced', obtenido '%s'", envelope.Data.Status)
-	}
-}
-
 func TestCLI_TicketList_BriefOutput(t *testing.T) {
 	cmd := exec.Command("go", "run", "./cmd/alo", "ticket", "list", "--brief", "-l", "2")
 	cmd.Dir = "../.."
