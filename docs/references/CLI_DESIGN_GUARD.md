@@ -81,11 +81,14 @@ Un CLI robusto es **ortogonal, predecible, silencioso y respeta la economía de 
 * **Modo Máquina (`--json`):**
   * Cuando se usa `--json`, la salida en `stdout` debe ser un único documento JSON válido que respete el esquema canónico ADR 0025 (`allostasis/1` o `ResponseEnvelope`).
   * Los flags de representación (`--brief`, `--json`, `--verbose`) solo alteran el formato, jamás la verdad de la consulta.
-* **Códigos de Salida Semánticos:**
-  * `0`: Éxito.
-  * `1`: Error de dominio o regla de negocio (ej. ticket no existe, fecha futura).
-  * `2`: Error de sintaxis o argumentos en línea de comandos (`argparse`).
-  * `3`: Instancia de Plane inaccesible (activación de fallback local).
+* **Códigos de Salida Semánticos (Matriz Canónica ADR 0032 & envelope.go):**
+  * `0` (`ExitSuccess`): Operación completada con éxito (`"ok": true`).
+  * `1` (`ExitGeneralError`): Error interno no clasificado o fallo genérico (`category: "internal"`).
+  * `2` (`ExitUsageError`): Error de sintaxis, argumentos inválidos o datos rechazados por Plane 400/422 (`category: "user_input"`).
+  * `3` (`ExitAuthError`): Credenciales ausentes, inválidas, expiradas o permisos denegados 401/403 (`category: "auth"`).
+  * `4` (`ExitNotFound`): Recurso, archivo o ticket no encontrado 404 (`category: "user_input"`).
+  * `5` (`ExitTransientError`): Error temporal de red, timeout o upstream 5xx reintentable sin outbox (`category: "upstream_service"`).
+  * `70` (`ExitSoftwareError`): Pánico en runtime interceptado defensivamente por `SafeExecute` (`category: "internal"`).
 
 ### Invariante 5: Economía de Tokens y Ergonomía de Agentes
 * Los comandos son consumidos tanto por humanos como por modelos de lenguaje en chats interactivos.

@@ -8,8 +8,7 @@ Open technical considerations, pending defects, and deferred improvements for Al
 
 Low-priority defects pending resolution:
 
-- **Stream large attachments (low):** uploads read the whole file (≤ 50 MB) into memory; streaming needs a `Content-Length`-aware multipart writer.
-- **Exit code contract is documented three ways (low):** `AGENTS.md` and `DEVELOPMENT.md` (`3` not found, `4` conflict), `CLI_DESIGN_GUARD.md` (`3` Plane unreachable) and `internal/presentation/errors` (`3` auth, `4` not found, `5` transient). Pick one and align the docs with the code.
+- **Stream large attachments (low):** uploads read the whole file (≤ 50 MB) into memory; streaming needs a `Content-Length`-aware multipart writer. Documented decision in [ADR 0033](decisions/0033-ticket-attachments-require-plane.md).
 
 ---
 
@@ -37,6 +36,8 @@ Low-priority defects pending resolution:
 
 ## 3. Recently Implemented in Core Go
 
+- **`ticket create --attach` y `ticket get --include` implementados:** `create` acepta `--attach` para subir archivos junto con la tarea; `get` acepta `--include comments,history,attachments,links` para secciones opcionales.
+- **Exit code contract unificado en documentación:** `CLI_DESIGN_GUARD.md` y `DEVELOPMENT.md` ahora reflejan la matriz canónica de `envelope.go` (`0` éxito, `1` interno, `2` usage, `3` auth, `4` not found, `5` transitorio, `70` pánico).
 - **`ticket link list` reconcilia y declara procedencia (`source`/`note`):** Plane es la fuente de verdad y se reconcilian enlaces eliminados; ante fallos transitorios se expone la copia local con `source: "cache"` y nota explicativa, mientras que fallos de autenticación o rechazo se muestran ruidosamente ([ADR 0033](decisions/0033-ticket-attachments-require-plane.md)).
 - **`ticket create` upserta la tarea creada en la caché local:** después de crear remotamente, `SaveIssue` y `SaveIssueSnapshot` persisten el ítem para que `get`, `search`, `list` y `focus set` lo encuentren sin requerir `sync`.
 - **`alo ticket comment add` implementado:** comando completo con flags `--hours`, `--start-time` y `--track` para bitácoras de tiempo. También incluye `comment edit`, `comment delete` y `comment list`.

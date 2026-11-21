@@ -84,7 +84,7 @@ Al implementar nuevas características o refactorizar código en `allostasis`, d
     }
   }
   ```
-- **Códigos POSIX Estándar:** `0` (éxito), `1` (error de dominio/ejecución), `2` (CLI usage), `3` (not found), `4` (conflicto/prerrequisito no cumplido).
+- **Códigos POSIX Estándar (Canónicos):** `0` (éxito), `1` (error interno/no clasificado), `2` (CLI usage / datos rechazados), `3` (auth/credenciales), `4` (not found), `5` (upstream transitorio/timeout), `70` (software crash / pánico interceptado). Ver especificación formal en [`docs/references/CLI_DESIGN_GUARD.md`](references/CLI_DESIGN_GUARD.md) y [`internal/presentation/errors/envelope.go`](../internal/presentation/errors/envelope.go).
 
 ---
 
