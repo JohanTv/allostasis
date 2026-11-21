@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/allostasis/alo/internal/adapters/sqlite"
-	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/adapters/sqlite"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
 )
 
 type e2eLinkPlane struct {

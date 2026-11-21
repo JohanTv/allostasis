@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/allostasis/alo/internal/adapters/tracker_plane"
-	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/adapters/tracker_plane"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
 )
 
 // FetchIssuesDelta debe tipar 401/403 como AuthError (el sync lo usa para omitir un proyecto sin permiso)

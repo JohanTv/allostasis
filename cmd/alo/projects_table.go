@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
 )
 
 // printProjectsTable imprime el listado de proyectos con su pertenencia (compartido por `alo projects` y `alo ticket projects`).

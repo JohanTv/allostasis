@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/allostasis/alo/internal/domain/workspace"
+	"github.com/JohanTv/allostasis/internal/domain/workspace"
 )
 
 // WorkspaceService orquesta la creación, inspección, auditoría y poda de contenedores worktree multi-repo.

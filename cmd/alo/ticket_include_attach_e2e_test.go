@@ -145,7 +145,7 @@ func TestCLI_Ticket_Get_Include_Attachments_Links_JSON(t *testing.T) {
 	plane.links["lnk-1"] = map[string]any{
 		"id":         "lnk-1",
 		"title":      "Pull Request #42",
-		"url":        "https://github.com/allostasis/alo/pull/42",
+		"url":        "https://github.com/JohanTv/allostasis/pull/42",
 		"created_at": "2026-11-21T12:00:00Z",
 	}
 

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/allostasis/alo/internal/domain/issue"
-	"github.com/allostasis/alo/internal/presentation/errors"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/presentation/errors"
 	"github.com/spf13/cobra"
 )
 

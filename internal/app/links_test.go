@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
 )
 
 func TestListLinks_ReconcilesFallsBackAndFailsLoud(t *testing.T) {

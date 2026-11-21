@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/allostasis/alo/internal/domain/clock"
+	"github.com/JohanTv/allostasis/internal/domain/clock"
 )
 
 func TestRealClock(t *testing.T) {

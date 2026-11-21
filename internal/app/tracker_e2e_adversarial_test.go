@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/allostasis/alo/internal/adapters/sqlite"
-	"github.com/allostasis/alo/internal/adapters/tracker_plane"
-	"github.com/allostasis/alo/internal/app"
-	"github.com/allostasis/alo/internal/domain/clock"
-	"github.com/allostasis/alo/internal/domain/issue"
-	"github.com/allostasis/alo/internal/domain/ledger"
+	"github.com/JohanTv/allostasis/internal/adapters/sqlite"
+	"github.com/JohanTv/allostasis/internal/adapters/tracker_plane"
+	"github.com/JohanTv/allostasis/internal/app"
+	"github.com/JohanTv/allostasis/internal/domain/clock"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/ledger"
 )
 
 // mockChaosServer encapsula un servidor HTTP con inyección de caos determinista

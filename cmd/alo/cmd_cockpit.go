@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/allostasis/alo/internal/domain/ledger"
-	"github.com/allostasis/alo/internal/presentation/errors"
-	"github.com/allostasis/alo/internal/presentation/tui"
+	"github.com/JohanTv/allostasis/internal/domain/ledger"
+	"github.com/JohanTv/allostasis/internal/presentation/errors"
+	"github.com/JohanTv/allostasis/internal/presentation/tui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/allostasis/alo/internal/adapters/gitcli"
-	"github.com/allostasis/alo/internal/domain/workspace"
+	"github.com/JohanTv/allostasis/internal/adapters/gitcli"
+	"github.com/JohanTv/allostasis/internal/domain/workspace"
 )
 
 // TestGitCLI_PathTraversal_And_FlagInjection evalúa la resistencia frente a inyecciones de flags

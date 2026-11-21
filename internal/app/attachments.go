@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
 )
 
 // Los adjuntos viven en Plane: no hay cola outbox para ellos (un archivo puede cambiar o desaparecer

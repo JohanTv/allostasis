@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/allostasis/alo/internal/adapters/tracker_plane"
-	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/adapters/tracker_plane"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
 )
 
 // Un 4xx por datos inválidos es un rechazo (no reintentable); auth y 5xx son fallos transitorios.

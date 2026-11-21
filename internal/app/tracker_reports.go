@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
 )
 
 // ProposeWorklog genera una propuesta de imputación de horas para una tarea.

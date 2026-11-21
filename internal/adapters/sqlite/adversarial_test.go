@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/allostasis/alo/internal/adapters/sqlite"
-	"github.com/allostasis/alo/internal/domain/issue"
-	"github.com/allostasis/alo/internal/domain/ledger"
+	"github.com/JohanTv/allostasis/internal/adapters/sqlite"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/ledger"
 )
 
 // TestSQLite_Concurrency_FileBased prueba el comportamiento de SQLite con WAL y busy_timeout(10000)

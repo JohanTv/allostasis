@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/allostasis/alo/internal/domain/workspace"
+	"github.com/JohanTv/allostasis/internal/domain/workspace"
 )
 
 func TestAuditContainers_EmptyDir(t *testing.T) {

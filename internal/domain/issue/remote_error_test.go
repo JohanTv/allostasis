@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
 )
 
 func TestClassifyRemoteError(t *testing.T) {

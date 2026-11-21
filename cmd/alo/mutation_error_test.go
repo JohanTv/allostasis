@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/allostasis/alo/internal/domain/issue"
-	presentation "github.com/allostasis/alo/internal/presentation/errors"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
+	presentation "github.com/JohanTv/allostasis/internal/presentation/errors"
 )
 
 func TestMutationErrorDetail(t *testing.T) {

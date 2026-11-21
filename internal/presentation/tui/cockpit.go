@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/allostasis/alo/internal/app"
+	"github.com/JohanTv/allostasis/internal/app"
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"

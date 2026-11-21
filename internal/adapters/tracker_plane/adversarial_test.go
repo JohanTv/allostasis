@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/allostasis/alo/internal/adapters/tracker_plane"
-	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/adapters/tracker_plane"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
 )
 
 // TestAdversarial_NetworkAndProtocolFailures somete al cliente HTTP a condiciones de red hostiles:

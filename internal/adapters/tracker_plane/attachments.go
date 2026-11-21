@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
 )
 
 const (

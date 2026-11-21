@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
 )
 
 // AddLink asocia un hipervínculo a una tarea en Plane. No se difiere: sin conexión o si Plane falla,

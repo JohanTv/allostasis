@@ -8,9 +8,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/allostasis/alo/internal/adapters/sqlite"
-	"github.com/allostasis/alo/internal/app"
-	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/adapters/sqlite"
+	"github.com/JohanTv/allostasis/internal/app"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
 )
 
 // scriptedClient es un Plane programable para las pruebas de despacho: estados, fallos por operación

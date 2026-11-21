@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
 )
 
 // SyncProjects descarga el catálogo de proyectos y los almacena localmente.

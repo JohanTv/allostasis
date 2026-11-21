@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/allostasis/alo/internal/adapters/gitcli"
-	"github.com/allostasis/alo/internal/domain/workspace"
+	"github.com/JohanTv/allostasis/internal/adapters/gitcli"
+	"github.com/JohanTv/allostasis/internal/domain/workspace"
 )
 
 func setupTestGitRepo(t *testing.T, dir string) {

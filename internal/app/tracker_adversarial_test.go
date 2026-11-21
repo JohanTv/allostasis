@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/allostasis/alo/internal/adapters/sqlite"
-	"github.com/allostasis/alo/internal/app"
-	"github.com/allostasis/alo/internal/domain/issue"
-	"github.com/allostasis/alo/internal/domain/ledger"
+	"github.com/JohanTv/allostasis/internal/adapters/sqlite"
+	"github.com/JohanTv/allostasis/internal/app"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/ledger"
 )
 
 // mockAdversarialTrackerClient emula un tracker upstream (Plane CE) con interruptor de conectividad,

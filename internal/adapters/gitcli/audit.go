@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/allostasis/alo/internal/domain/workspace"
+	"github.com/JohanTv/allostasis/internal/domain/workspace"
 )
 
 var (

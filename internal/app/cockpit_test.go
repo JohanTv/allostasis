@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/allostasis/alo/internal/adapters/sqlite"
-	"github.com/allostasis/alo/internal/app"
-	"github.com/allostasis/alo/internal/domain/clock"
-	"github.com/allostasis/alo/internal/domain/issue"
-	"github.com/allostasis/alo/internal/domain/ledger"
+	"github.com/JohanTv/allostasis/internal/adapters/sqlite"
+	"github.com/JohanTv/allostasis/internal/app"
+	"github.com/JohanTv/allostasis/internal/domain/clock"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/ledger"
 )
 
 func TestCockpitService_SnapshotAndLogTime(t *testing.T) {

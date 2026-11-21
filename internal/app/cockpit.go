@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/allostasis/alo/internal/domain/clock"
-	"github.com/allostasis/alo/internal/domain/issue"
-	"github.com/allostasis/alo/internal/domain/ledger"
-	"github.com/allostasis/alo/internal/domain/workspace"
+	"github.com/JohanTv/allostasis/internal/domain/clock"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/ledger"
+	"github.com/JohanTv/allostasis/internal/domain/workspace"
 )
 
 // CockpitSnapshot captura el estado holístico del desarrollador para CLI y TUI.

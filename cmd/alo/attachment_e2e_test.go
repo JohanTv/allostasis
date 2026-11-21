@@ -16,8 +16,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/allostasis/alo/internal/adapters/sqlite"
-	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/adapters/sqlite"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
 )
 
 // e2ePlane simula Plane CE (API y almacenamiento firmado) para ejecutar el binario real de punta a punta.

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/allostasis/alo/internal/domain/ledger"
+	"github.com/JohanTv/allostasis/internal/domain/ledger"
 )
 
 func parseTime(s string) time.Time {

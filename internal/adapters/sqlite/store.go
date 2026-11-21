@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/allostasis/alo/internal/domain/issue"
-	"github.com/allostasis/alo/internal/domain/ledger"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/ledger"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/allostasis/alo/internal/config"
+	"github.com/JohanTv/allostasis/internal/config"
 )
 
 func TestResolveDatabasePath_Hierarchy(t *testing.T) {

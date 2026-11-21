@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/allostasis/alo/internal/app"
-	"github.com/allostasis/alo/internal/domain/ledger"
+	"github.com/JohanTv/allostasis/internal/app"
+	"github.com/JohanTv/allostasis/internal/domain/ledger"
 	"github.com/charmbracelet/huh"
 )
 

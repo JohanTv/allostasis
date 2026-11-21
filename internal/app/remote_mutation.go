@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/allostasis/alo/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
 )
 
 // Disposition dice qué pasó con una mutación remota. Quien la consume debe reportarla: una mutación

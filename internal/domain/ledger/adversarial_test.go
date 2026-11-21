@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/allostasis/alo/internal/domain/clock"
-	"github.com/allostasis/alo/internal/domain/ledger"
+	"github.com/JohanTv/allostasis/internal/domain/clock"
+	"github.com/JohanTv/allostasis/internal/domain/ledger"
 )
 
 // TestKlee_DegenerateIntervals evalúa casos patológicos y de frontera en el cálculo de intervalos:

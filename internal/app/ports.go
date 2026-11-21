@@ -3,9 +3,9 @@ package app
 import (
 	"context"
 
-	"github.com/allostasis/alo/internal/domain/issue"
-	"github.com/allostasis/alo/internal/domain/ledger"
-	"github.com/allostasis/alo/internal/domain/workspace"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/ledger"
+	"github.com/JohanTv/allostasis/internal/domain/workspace"
 )
 
 // IssueReader desacopla a los clientes (e.g. WorkspaceService) que únicamente necesitan consultar una tarea por clave o ID.

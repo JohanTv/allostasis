@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/allostasis/alo/internal/presentation/errors"
+	"github.com/JohanTv/allostasis/internal/presentation/errors"
 )
 
 func main() {

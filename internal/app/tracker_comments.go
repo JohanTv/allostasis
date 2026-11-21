@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/allostasis/alo/internal/domain/issue"
-	"github.com/allostasis/alo/internal/domain/ledger"
+	"github.com/JohanTv/allostasis/internal/domain/issue"
+	"github.com/JohanTv/allostasis/internal/domain/ledger"
 )
 
 // AddComment agrega un comentario o bitácora de tiempo a una tarea.

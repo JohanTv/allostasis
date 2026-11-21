@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/allostasis/alo/internal/domain/workspace"
+	"github.com/JohanTv/allostasis/internal/domain/workspace"
 )
 
 // GitExecutor implementa WorkspaceExecutor y operaciones sobre repositorios Git.
