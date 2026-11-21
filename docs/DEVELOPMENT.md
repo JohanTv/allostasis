@@ -57,6 +57,8 @@ Al implementar nuevas características o refactorizar código en `allostasis`, d
 - **Zero Adapter-to-Adapter Leaks:** Queda terminantemente prohibido que un adaptador importe o llame a otro adaptador (por ejemplo, `tracker_plane` no conoce SQLite; `gitcli` no conoce la base de datos).
 
 ### 3.3. Adaptador de Persistencia SQLite (`internal/adapters/sqlite/`)
+- **Resolución Canónica de Ruta:** La ruta a la base de datos se resuelve estrictamente mediante [`internal/config.ResolveDatabasePath`](../internal/config/config.go) siguiendo la precedencia canónica: flag `--db` > variable de entorno `ALLOSTASIS_DB` > ruta por defecto en caché de usuario (`~/.cache/allostasis/allostasis.db`).
+- **Aislamiento Hermético en Pruebas:** Queda terminantemente prohibido que las pruebas unitarias o de integración (`go test`) apunten o muten la base de datos de producción (`~/.cache/...`). Todo harness de pruebas debe aprovisionar su propia base aislada en `t.TempDir()`.
 - **Dual-Pool WAL:**
   - Conexión de escritura única: `SetMaxOpenConns(1)` para serializar mutaciones y prevenir bloqueos `SQLITE_BUSY`.
   - Conexiones de lectura concurrentes: `SetMaxOpenConns(runtime.NumCPU() * 2)` con `_pragma=query_only(ON)` para lecturas en paralelo sin contención.

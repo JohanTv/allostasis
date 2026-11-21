@@ -66,7 +66,8 @@ Un CLI robusto es **ortogonal, predecible, silencioso y respeta la economía de 
 ### Invariante 3: Jerarquía Gramatical (`alo <recurso> <acción>`)
 * El CLI sigue una jerarquía gramatical consistente:
   $$\text{CLI} \longrightarrow \langle\text{recurso}\rangle \longrightarrow \langle\text{acción}\rangle \; [\text{opciones}]$$
-* **Recursos (Sustantivos):** `ticket`, `workspace` (o `ws`), `outbox`, `sync`.
+* **Recursos (Sustantivos):** `ticket`, `workspace` (o `ws`), `sync`.
+* **Sub-recursos:** `ticket outbox`, `ticket attachment`, `ticket link`, `ticket comment`.
 * **Acciones (Verbos estándar):**
   * Colecciones: `list`, `prune`, `dlq`.
   * Elementos individuales: `get`, `create`, `update`, `delete`.
@@ -99,10 +100,10 @@ Un CLI robusto es **ortogonal, predecible, silencioso y respeta la economía de 
   * Ofrecer flags como `--brief` para omitir metadata voluminosa cuando solo se requieren IDs, títulos y estados.
   * Salidas completas (historiales extensos, adjuntos) deben requerir confirmación explícita (`--full`, `--history`).
 
-### Invariante 6: Integridad Evolutiva y Ratchets de Código
+### Invariante 6: Integridad Evolutiva y Aislamiento de Capas
 * **Compatibilidad hacia atrás:** No renombrar ni eliminar flags existentes sin ciclo formal de deprecación y RFC previo.
-* **Capas delgadas de parsing:** Los módulos CLI (`cli.py`, `cmd_*.py`) solo parsean y enrutan; no contienen consultas SQL crudas ni llamadas HTTP directas.
-* **Límite de tamaño de archivo (Ratchet):** Ningún archivo en `scripts/plane_cli/` puede superar el límite estricto de **450 líneas** (`MAX_FILE_LINES = 450`).
+* **Capas delgadas de presentación:** Los comandos CLI (`cmd/alo/cmd_*.go`) se limitan a la definición de Cobra, binding de flags, validación pre-flight de argumentos y delegación en `internal/app/`. Queda terminantemente prohibido ejecutar queries SQL crudas o llamadas HTTP directas desde la capa de presentación.
+* **Modularidad por Dominio:** Los comandos complejos deben segregarse en archivos cohesivos por recurso o sub-recurso (`cmd_ticket.go`, `cmd_ticket_attachment.go`, `cmd_workspace.go`, `cmd_sync.go`), respetando la arquitectura hexagonal.
 
 ---
 

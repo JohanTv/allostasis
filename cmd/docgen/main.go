@@ -229,6 +229,109 @@ func FindDocsRoot(docsDir string) string {
 	return absDocs
 }
 
+func validateMarkdownFileLinks(path, repoRoot, displayRelDir string) []string {
+	var errs []string
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return []string{fmt.Sprintf("%s: error leyendo archivo: %v", path, err)}
+	}
+
+	relFile, _ := filepath.Rel(displayRelDir, path)
+	matches := linkPattern.FindAllStringSubmatch(string(content), -1)
+	for _, m := range matches {
+		if len(m) < 3 {
+			continue
+		}
+		rawTarget := strings.TrimSpace(m[2])
+
+		// 1. Enlace vacío
+		if rawTarget == "" {
+			errs = append(errs, fmt.Sprintf("%s: enlace vacío '[]()'", relFile))
+			continue
+		}
+
+		// Soporte para delimitadores <url>
+		if strings.HasPrefix(rawTarget, "<") && strings.HasSuffix(rawTarget, ">") {
+			rawTarget = strings.TrimPrefix(strings.TrimSuffix(rawTarget, ">"), "<")
+		}
+
+		// Soporte para títulos opcionales en Markdown: [text](url "title")
+		if idx := strings.IndexAny(rawTarget, " \t"); idx != -1 {
+			rest := strings.TrimSpace(rawTarget[idx:])
+			if (strings.HasPrefix(rest, `"`) && strings.HasSuffix(rest, `"`)) ||
+				(strings.HasPrefix(rest, `'`) && strings.HasSuffix(rest, `'`)) {
+				rawTarget = strings.TrimSpace(rawTarget[:idx])
+			}
+		}
+
+		// Enlace con espacios en blanco no permitidos
+		if strings.ContainsAny(rawTarget, " \t\r\n") {
+			errs = append(errs, fmt.Sprintf("%s: enlace con espacios en blanco no permitidos: '%s'", relFile, rawTarget))
+			continue
+		}
+
+		// Ignorar esquemas web
+		if strings.HasPrefix(rawTarget, "http://") || strings.HasPrefix(rawTarget, "https://") ||
+			strings.HasPrefix(rawTarget, "mailto:") {
+			continue
+		}
+
+		// Prohibir file:/// ya que viola la portabilidad (ADR-0007)
+		if strings.HasPrefix(rawTarget, "file://") {
+			errs = append(errs, fmt.Sprintf("%s: enlace absoluto 'file://' no portable (usa rutas relativas): %s", relFile, rawTarget))
+			continue
+		}
+
+		// Prohibir enlaces absolutos con '/'
+		if strings.HasPrefix(rawTarget, "/") {
+			errs = append(errs, fmt.Sprintf("%s: enlace absoluto con '/' no permitido (usa rutas relativas): %s", relFile, rawTarget))
+			continue
+		}
+
+		// Validación de anclas y fragmentos
+		targetFile := rawTarget
+		if strings.Contains(rawTarget, "#") {
+			parts := strings.Split(rawTarget, "#")
+			if len(parts) > 2 {
+				errs = append(errs, fmt.Sprintf("%s: ancla fragmentada o malformada (múltiples '#'): '%s'", relFile, rawTarget))
+				continue
+			}
+			targetFile = parts[0]
+			anchor := parts[1]
+			if anchor == "" {
+				errs = append(errs, fmt.Sprintf("%s: ancla vacía en enlace: '%s'", relFile, rawTarget))
+				continue
+			}
+			if strings.ContainsAny(anchor, " \t\r\n<>\"'\\^`{}|") {
+				errs = append(errs, fmt.Sprintf("%s: ancla con caracteres inválidos: '%s'", relFile, rawTarget))
+				continue
+			}
+			if targetFile == "" {
+				// Ancla intra-documento válida (ej. [Context](#context))
+				continue
+			}
+		}
+
+		resolved := filepath.Clean(filepath.Join(filepath.Dir(path), targetFile))
+		absResolved, err := filepath.Abs(resolved)
+		if err != nil {
+			absResolved = resolved
+		}
+
+		// Detección de Path Traversal fuera del repositorio
+		relToRoot, err := filepath.Rel(repoRoot, absResolved)
+		if err != nil || strings.HasPrefix(relToRoot, "..") {
+			errs = append(errs, fmt.Sprintf("%s: enlace hacia el exterior del repositorio no permitido (path traversal): %s", relFile, targetFile))
+			continue
+		}
+
+		if _, err := os.Stat(resolved); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: enlace roto a '%s' (no existe: %s)", relFile, targetFile, resolved))
+		}
+	}
+	return errs
+}
+
 func CheckRelativeLinks(docsDir string) []string {
 	var errs []string
 	repoRoot := FindDocsRoot(docsDir)
@@ -241,111 +344,22 @@ func CheckRelativeLinks(docsDir string) []string {
 			return nil
 		}
 
-		content, err := os.ReadFile(path)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s: error leyendo archivo: %v", path, err))
-			return nil
-		}
-
-		relFile, _ := filepath.Rel(docsDir, path)
-		matches := linkPattern.FindAllStringSubmatch(string(content), -1)
-		for _, m := range matches {
-			if len(m) < 3 {
-				continue
-			}
-			rawTarget := strings.TrimSpace(m[2])
-
-			// 1. Enlace vacío
-			if rawTarget == "" {
-				errs = append(errs, fmt.Sprintf("%s: enlace vacío '[]()'", relFile))
-				continue
-			}
-
-			// Soporte para delimitadores <url>
-			if strings.HasPrefix(rawTarget, "<") && strings.HasSuffix(rawTarget, ">") {
-				rawTarget = strings.TrimPrefix(strings.TrimSuffix(rawTarget, ">"), "<")
-			}
-
-			// Soporte para títulos opcionales en Markdown: [text](url "title")
-			if idx := strings.IndexAny(rawTarget, " \t"); idx != -1 {
-				rest := strings.TrimSpace(rawTarget[idx:])
-				if (strings.HasPrefix(rest, `"`) && strings.HasSuffix(rest, `"`)) ||
-					(strings.HasPrefix(rest, `'`) && strings.HasSuffix(rest, `'`)) {
-					rawTarget = strings.TrimSpace(rawTarget[:idx])
-				}
-			}
-
-			// Enlace con espacios en blanco no permitidos
-			if strings.ContainsAny(rawTarget, " \t\r\n") {
-				errs = append(errs, fmt.Sprintf("%s: enlace con espacios en blanco no permitidos: '%s'", relFile, rawTarget))
-				continue
-			}
-
-			// Ignorar esquemas web
-			if strings.HasPrefix(rawTarget, "http://") || strings.HasPrefix(rawTarget, "https://") ||
-				strings.HasPrefix(rawTarget, "mailto:") {
-				continue
-			}
-
-			// Prohibir file:/// ya que viola la portabilidad (ADR-0007)
-			if strings.HasPrefix(rawTarget, "file://") {
-				errs = append(errs, fmt.Sprintf("%s: enlace absoluto 'file://' no portable (usa rutas relativas): %s", relFile, rawTarget))
-				continue
-			}
-
-			// Prohibir enlaces absolutos con '/'
-			if strings.HasPrefix(rawTarget, "/") {
-				errs = append(errs, fmt.Sprintf("%s: enlace absoluto con '/' no permitido (usa rutas relativas): %s", relFile, rawTarget))
-				continue
-			}
-
-			// Validación de anclas y fragmentos
-			targetFile := rawTarget
-			if strings.Contains(rawTarget, "#") {
-				parts := strings.Split(rawTarget, "#")
-				if len(parts) > 2 {
-					errs = append(errs, fmt.Sprintf("%s: ancla fragmentada o malformada (múltiples '#'): '%s'", relFile, rawTarget))
-					continue
-				}
-				targetFile = parts[0]
-				anchor := parts[1]
-				if anchor == "" {
-					errs = append(errs, fmt.Sprintf("%s: ancla vacía en enlace: '%s'", relFile, rawTarget))
-					continue
-				}
-				if strings.ContainsAny(anchor, " \t\r\n<>\"'\\^`{}|") {
-					errs = append(errs, fmt.Sprintf("%s: ancla con caracteres inválidos: '%s'", relFile, rawTarget))
-					continue
-				}
-				if targetFile == "" {
-					// Ancla intra-documento válida (ej. [Context](#context))
-					continue
-				}
-			}
-
-			resolved := filepath.Clean(filepath.Join(filepath.Dir(path), targetFile))
-			absResolved, err := filepath.Abs(resolved)
-			if err != nil {
-				absResolved = resolved
-			}
-
-			// Detección de Path Traversal fuera del repositorio
-			relToRoot, err := filepath.Rel(repoRoot, absResolved)
-			if err != nil || strings.HasPrefix(relToRoot, "..") {
-				errs = append(errs, fmt.Sprintf("%s: enlace hacia el exterior del repositorio no permitido (path traversal): %s", relFile, targetFile))
-				continue
-			}
-
-			if _, err := os.Stat(resolved); err != nil {
-				errs = append(errs, fmt.Sprintf("%s: enlace roto a '%s' (no existe: %s)", relFile, targetFile, resolved))
-			}
-		}
-
+		errs = append(errs, validateMarkdownFileLinks(path, repoRoot, docsDir)...)
 		return nil
 	})
 
 	if err != nil {
 		errs = append(errs, fmt.Sprintf("error caminando directorio docs: %v", err))
+	}
+
+	// Auditar también archivos Markdown en la raíz del repositorio (AGENTS.md, README.md, etc.)
+	if entries, err := os.ReadDir(repoRoot); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+				rootFile := filepath.Join(repoRoot, e.Name())
+				errs = append(errs, validateMarkdownFileLinks(rootFile, repoRoot, repoRoot)...)
+			}
+		}
 	}
 
 	return errs
