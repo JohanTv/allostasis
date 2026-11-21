@@ -15,10 +15,10 @@ import (
 )
 
 type e2eLinkPlane struct {
-	mu         sync.Mutex
-	links      map[string]map[string]any
-	status     int
-	apiCalls   int
+	mu       sync.Mutex
+	links    map[string]map[string]any
+	status   int
+	apiCalls int
 }
 
 func newE2ELinkPlane(t *testing.T) (*e2eLinkPlane, *httptest.Server) {

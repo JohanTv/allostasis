@@ -17,24 +17,24 @@ const (
 
 // WorkItem representa un ticket o elemento de trabajo en el tracker de Allostasis.
 type WorkItem struct {
-	ID              string     `json:"id"`
-	Key             string     `json:"key"` // ej. OMNIFY-175, PROJ-10
-	ProjectID       string     `json:"project_id,omitempty"`
-	ProjectKey      string     `json:"project_key,omitempty"`
-	PendingSync     bool       `json:"pending_sync,omitempty"` // la mutación quedó en el outbox; no está en Plane todavía
-	SequenceID      int        `json:"sequence_id,omitempty"`
-	Title           string     `json:"title"`
-	Description     string     `json:"description,omitempty"`
-	DescriptionHTML string     `json:"description_html,omitempty"`
-	State           State      `json:"state"`
-	StateName       string     `json:"state_name,omitempty"`
-	StateGroup      string     `json:"state_group,omitempty"`
-	Priority        string     `json:"priority"`
-	Assignee        string     `json:"assignee,omitempty"`
-	Assignees       []string   `json:"assignees,omitempty"`
-	CreatedBy       string     `json:"created_by,omitempty"`
-	Labels          []string   `json:"labels,omitempty"`
-	LabelsCSV       string     `json:"labels_csv,omitempty"`
+	ID              string       `json:"id"`
+	Key             string       `json:"key"` // ej. OMNIFY-175, PROJ-10
+	ProjectID       string       `json:"project_id,omitempty"`
+	ProjectKey      string       `json:"project_key,omitempty"`
+	PendingSync     bool         `json:"pending_sync,omitempty"` // la mutación quedó en el outbox; no está en Plane todavía
+	SequenceID      int          `json:"sequence_id,omitempty"`
+	Title           string       `json:"title"`
+	Description     string       `json:"description,omitempty"`
+	DescriptionHTML string       `json:"description_html,omitempty"`
+	State           State        `json:"state"`
+	StateName       string       `json:"state_name,omitempty"`
+	StateGroup      string       `json:"state_group,omitempty"`
+	Priority        string       `json:"priority"`
+	Assignee        string       `json:"assignee,omitempty"`
+	Assignees       []string     `json:"assignees,omitempty"`
+	CreatedBy       string       `json:"created_by,omitempty"`
+	Labels          []string     `json:"labels,omitempty"`
+	LabelsCSV       string       `json:"labels_csv,omitempty"`
 	CompletedAt     *time.Time   `json:"completed_at,omitempty"`
 	StartDate       string       `json:"start_date,omitempty"`
 	TargetDate      string       `json:"target_date,omitempty"`

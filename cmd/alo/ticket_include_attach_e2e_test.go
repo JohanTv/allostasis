@@ -15,14 +15,14 @@ import (
 
 // serverWithAll simula Plane CE para create, get, attachments, links y bucket de almacenamiento.
 type serverWithAll struct {
-	mu           sync.Mutex
+	mu            sync.Mutex
 	createdIssues map[string]map[string]any
-	attachments  map[string]map[string]any
-	links        map[string]map[string]any
-	storedFiles  map[string]string
-	nextIssueID  int
-	nextAttID    int
-	apiCalls     int
+	attachments   map[string]map[string]any
+	links         map[string]map[string]any
+	storedFiles   map[string]string
+	nextIssueID   int
+	nextAttID     int
+	apiCalls      int
 }
 
 func newServerWithAll(t *testing.T) (*serverWithAll, *httptest.Server) {
