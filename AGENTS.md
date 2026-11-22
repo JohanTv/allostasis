@@ -1,6 +1,6 @@
 # Directrices de Agentes: Allostasis (`alo`)
 
-> **Referencias:** Arquitectura hexagonal, diseño SOLID y protocolo M2M en `go-cli-tui`. Adaptadores, persistencia SQLite y Git en [`DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+> **Referencias:** Arquitectura hexagonal, diseño SOLID y protocolo M2M en `go-cli-tui`. Adaptadores, persistencia SQLite y backlog en [`DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
 ---
 
