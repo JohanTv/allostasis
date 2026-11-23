@@ -16,11 +16,9 @@ Open technical considerations, pending defects, and deferred improvements for Al
   - **Status:** Architecture ready; adapter development open.
   - **Context:** The canonical port [`RemoteTrackerClient`](../internal/app/ports.go) in `internal/app/ports.go` abstracts all remote tracking operations. Plane CE is 100% functional. Implementations for Linear GraphQL and GitHub Issues REST can be plugged in without modifying application services or domain logic.
 
-- **RFC-0029 · Interactive TUI Worktree Navigator (`alo ws browse`):**
-  - **Status:** Proposed for v0.2.0.
-  - **Context:** Expand Bubble Tea presentation with an interactive worktree container explorer:
-    - Visual container list with health color indicators (green: clean/active; yellow: stale/abandoned; blue: merged/ready to prune).
-    - Quick actions: `<Enter>` opens a terminal or Zellij tab in the container; `<p>` triggers an interactive safe prune modal with `.tar.gz` backup confirmation; `<c>` opens an interactive creation form.
+- **RFC-0029 · Unified Interactive TUI (`alo browse`):**
+  - **Status:** ✓ Implemented (v0.2.0).
+  - **Context:** `alo browse` (alias `tui`) opens a tabbed Bubble Tea TUI with 4 sections: Cockpit (metrics), Tickets (active tasks table), Workspaces (worktree health), and Log (time entry reference). `alo` without arguments shows Cobra help, preserving headless-first design. Tab navigation via `Tab`/`Shift+Tab` or `1`–`4` keys. See [RFC-0029](rfcs/0029-tui-worktree-navigator.md).
 
 - **RFC-0030 · Background Sync Daemon (`alo daemon`):**
   - **Status:** Proposed for v0.2.0.

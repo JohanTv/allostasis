@@ -25,6 +25,12 @@ type CockpitSnapshot struct {
 	StatusSummary      string                `json:"status_summary"`
 }
 
+// CockpitReader expone solo la operación de lectura del snapshot.
+// Permite que las capas de presentación dependan de una interfaz en vez de CockpitService concreto (DIP/ISP).
+type CockpitReader interface {
+	GetSnapshot(ctx context.Context, worktreeRoot string) (*CockpitSnapshot, error)
+}
+
 // CockpitService orquesta la lectura y mutaciones de alto nivel desacoplado de infraestructura.
 type CockpitService struct {
 	issueStore   CockpitStore

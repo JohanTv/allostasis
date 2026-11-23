@@ -35,7 +35,7 @@
 | **0021** | [Architectural model for queries, views, and JSON envelopes](rfcs/0021-query-and-view-read-architecture.md) | implemented | Architectural overhaul establishing layer separation, standardized envelope contracts, and fitness function safeguards (F1-F15). |
 | **0026** | [Measuring time distribution against user-declared capacity plans](rfcs/0026-time-distribution-against-plan.md) | implemented | Proposal to measure recorded time against user-configured engineering capacity targets (features, support, tech debt, learning, overhead). |
 | **0027** | [Incremental delta sync, target granularity, and CQS separation](rfcs/0027-incremental-sync-and-granularity.md) | implemented | Architectural overhaul establishing strict CQS for read views, granular sync targets, SQLite watermark timestamps, and early-exit pagination. |
-| **0029** | [Interactive TUI Worktree Navigator (alo ws browse)](rfcs/0029-tui-worktree-navigator.md) | proposed | Interactive Charm Bubble Tea view for visual container inspection, terminal or Zellij launch, and interactive safe pruning. |
+| **0029** | [Unified Interactive TUI (alo browse)](rfcs/0029-tui-worktree-navigator.md) | implemented | Unified tabbed Charm Bubble Tea TUI for cockpit metrics, tickets, workspaces, and time logging — accessed via `alo browse` (alias `tui`). |
 | **0030** | [Background Sync Daemon (alo daemon)](rfcs/0030-background-sync-daemon.md) | proposed | Non-blocking background worker for automatic periodic outbox flushing and health pings upon network availability. |
 
 ---
